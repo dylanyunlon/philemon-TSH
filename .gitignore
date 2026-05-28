@@ -1,0 +1,13 @@
+# Binaries
+philemon_bench
+philemon_fast
+philemon_data_gen
+fig4_only
+
+# Extracted data demo
+data_demo/
+
+# OS
+.DS_Store
+*.o
+*.d
