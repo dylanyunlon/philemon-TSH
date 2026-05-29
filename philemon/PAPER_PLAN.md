@@ -109,5 +109,28 @@ after Evaluation), matching DES-LOC §6–§7 length. They are not "big" section
     DRAM; sm_86 + compute_80 PTX), and the 2000-pts × 3-seeds protocol. Mirror
     DES-LOC §4 + §4.1. Build on the HEAD this patch leaves.
 - Claude #4 — §4 Experimental Design — PENDING.
-- Claude #4 — §4 Experimental Design — PENDING.
+- Claude #4 — **§4 Experimental Design — DONE.** Replaced the §4 stub with the
+  six research questions (RQ1 index predicts selection cost; RQ2 tier placement
+  vs latency; RQ3 scan/selection speedup vs linear; RQ4 scaling to 100M edges
+  across physical tiers; RQ5 streaming + compaction; RQ6 concurrency / migration
+  overlap) and a §4.1 "Experimental Setup": workloads (synthetic 1M→100M-edge
+  stream + LDBC SNB SF-1/10/100; narrow/medium/wide/full windows ≈1.3K/95K/495K/1M
+  edges), memory tiers + hardware (server `ags1` = H100 NVL 96 GB HBM2e + 2× A6000
+  49 GB GDDR6 + 2× EPYC 9354 ~1.5 TB DDR5, PCIe-only, sm_86 + compute_80 PTX;
+  dev harness CPU-only, HBM 512 / GDDR 1024 / DRAM 2048 MB; cost model 1/5/50 ns),
+  baselines (Tiered / HBM-Only / DRAM-Only + linear-sweep oracle with matched
+  touch() + TEM-Graph-only + RapidStore-only), and metrics/protocol (the eight
+  philemon_*_2000 curves: query latency, QPS, memory util, migration cost,
+  interval-index micro-bench, partition-selection micro-bench, async migration,
+  query-under-migration; mean±std over final window, 3 seeds, 2000 pts). No new
+  bib keys. PDF compiles (9 pages), no undefined refs.
+  - ⚠️ For Claude #5: §5 Evaluation, one subsection per RQ, using the eight
+    philemon_*_2000.json curves. Land the headline numbers: intra-partition scan
+    43.9× (narrow 232.6→5.3 µs; medium 108.5 µs; wide 608 µs; full 1230 µs at
+    ~1.23 ns/edge); partition selection at P=8000 narrow 4.1× / medium 1.75× /
+    wide 0.85×, pure selection 3.7 µs indexed vs 8.0 µs linear; Tiered latency
+    between HBM-Only and DRAM-Only; near-zero fragmentation; scaling to 100M
+    edges; concurrency/migration-overlap from async_migration + query_under_mig.
+    Cross-reference §3 for correctness and §4 for the protocol. Then append the
+    short Related Work + Conclusion (DES-LOC §6–§7 length). Build on this HEAD.
 - Claude #5 — §5 Evaluation (+ short Related Work & Conclusion) — PENDING.

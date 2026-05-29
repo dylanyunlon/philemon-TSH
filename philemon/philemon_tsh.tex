@@ -633,24 +633,89 @@ read-consistency guarantee (Proposition~\ref{prop:read}) under contention.
 \section{Experimental Design}
 \label{sec:expdesign}
 % =============================================================================
-% --- Claude #4 fills this section ---
-% Template analogue: DES-LOC Section 4 (Experimental Design) + 4.1 Setup.
-% Required structure:
-%   - Research questions RQ1-RQ6 (e.g. RQ1: does the augmented index predict the
-%     measured selection cost? RQ2: how does tier placement affect latency?
-%     RQ3: scan/selection speedup vs linear? RQ4: scaling to 100M edges?
-%     RQ5: behaviour under streaming ingestion + compaction? RQ6: concurrency /
-%     migration overlap?).
-%   - \subsection{Experimental Setup}: workloads (synthetic 1M-edge temporal
-%     graph + LDBC SNB SF-1/SF-10/SF-100), tier configuration (HBM 512 MB /
-%     GDDR 1024 MB / DRAM 2048 MB in the dev harness), baselines (single-tier
-%     all-HBM, all-DRAM, linear-sweep oracle, TEM-Graph-only, RapidStore-only),
-%     metrics (query latency by window width, QPS, per-tier memory utilization,
-%     migration cost, scan & selection speedup), hardware (H100 + A6000 + DRAM;
-%     sm_86 + compute_80 PTX), and the 2000-points x 3-seeds data protocol.
-% Grounding: Makefile, build_hetero.sh, run_hetero.sh, DEVELOPMENT_PLAN.md,
-%   philemon_*_2000.json headers.
-\todoclaude{Claude \#4: Experimental Design (\S\ref{sec:expdesign}).}
+% --- Claude #4 ---  (template analogue: DES-LOC Section 4, "Experimental Design" + 4.1)
+
+Our evaluation is organized around six research questions.
+\textbf{(RQ1)} Does the $O(\log P + k)$ selection analysis of
+\S\ref{sec:selection} predict the measured partition-selection cost?
+\textbf{(RQ2)} How does residency-tier placement affect temporal-subgraph query
+latency across the HBM/GDDR/DRAM hierarchy?
+\textbf{(RQ3)} What speedup does the augmented index deliver for intra-partition
+scanning and inter-partition selection relative to linear baselines?
+\textbf{(RQ4)} Does Philemon-TSH scale as the temporal-edge table grows toward
+$100$M edges across the physical tiers of a mixed-generation node?
+\textbf{(RQ5)} How does the segmented index behave under streaming ingestion with
+compaction?
+\textbf{(RQ6)} What is the cost of concurrent operation, and how well does
+asynchronous migration overlap with queries?
+
+\subsection{Experimental Setup}
+\label{sec:setup}
+
+\paragraph{Workloads.}
+We use two temporal-graph workloads. The first is a synthetic temporal-edge
+stream: edges $(\text{src},\text{dst},\text{ts\_start},\text{ts\_end})$ drawn over
+a controlled timeline, from $1$M edges in the development harness up to $100$M
+edges on the server, so that partition count $P$ and selectivity can be varied
+independently. The second is LDBC SNB~\citep{erling2015ldbc} at scale factors
+SF-1, SF-10, and SF-100, whose person-knows-person edges carry creation
+timestamps, providing a realistic skewed temporal distribution against which the
+density-adaptive partitioning of \S\ref{sec:timescales} is exercised; these graphs
+also motivate the temporal-subgraph gather that drives GNN
+training~\citep{rossi2020tgn,hamilton2017graphsage}. Queries are issued over four
+window widths---\emph{narrow}, \emph{medium}, \emph{wide}, and \emph{full}---so
+that selectivity sweeps from a single partition (small $k$) to the entire timeline
+($k=P$); on the $1$M-edge layout these correspond to result sizes of roughly
+$1.3$K, $95$K, $495$K, and $1$M edges.
+
+\paragraph{Memory tiers and hardware.}
+Philemon-TSH models a three-tier logical hierarchy---HBM, GDDR, DRAM---with a
+latency/bandwidth cost model of ${\sim}1$\,ns at ${\sim}3.35$\,TB/s (HBM),
+${\sim}5$\,ns at ${\sim}768$\,GB/s (GDDR), and ${\sim}50$\,ns at ${\sim}80$\,GB/s
+(DRAM). We run on two configurations. The \emph{server} (\texttt{ags1}) is a
+mixed-generation node: one H100 NVL ($96$\,GB HBM2e) and two RTX A6000
+($49$\,GB GDDR6 each) backed by two AMD EPYC 9354 CPUs with ${\sim}1.5$\,TB DDR5,
+all GPUs on one NUMA domain over PCIe Gen5 with no NVLink (PCIe-only peer paths).
+Here the GDDR tier is realized by the two A6000 boards, so cross-tier placement
+spans four physical pools (H100-HBM, A6000-0-GDDR, A6000-1-GDDR, host-DRAM); the
+CUDA backend builds for \texttt{sm\_86} (A6000, Ampere) with \texttt{compute\_80}
+PTX JIT-ed to the H100 (Hopper) under CUDA 11.5 / driver 550, and uses pinned host
+memory and \texttt{cudaMemcpyAsync} double-buffering for migration. The
+\emph{development harness} is CPU-only and simulates all three tiers from DRAM
+under fixed logical budgets (HBM $512$\,MB, GDDR $1024$\,MB, DRAM $2048$\,MB),
+which lets correctness and selection-cost experiments run without a GPU.
+
+\paragraph{Baselines.}
+We compare three placement strategies: \textbf{Tiered} (Philemon-TSH, hot
+partitions waterfalled toward HBM), \textbf{HBM-Only} (everything pinned in the
+fast tier---a latency upper bound that ignores the capacity limit and so cannot
+hold the larger graphs), and \textbf{DRAM-Only} (everything in host memory---the
+capacity-ample, latency-poor floor). For partition selection we additionally
+compare the augmented index against the \textbf{linear-sweep oracle}, the $O(P)$
+\textsc{Query} fallback (\S\ref{sec:selection}); for a fair latency comparison the
+oracle \texttt{touch}es every hit exactly as the indexed path does (the
+correction discussed in \S\ref{sec:selection}). As upstream points of reference we
+include \textbf{TEM-Graph-only}~\citep{temgraph} (a single-tier interval index)
+and \textbf{RapidStore-only}~\citep{rapidstore} (concurrent snapshot storage
+without tiering), neither of which coordinates placement with the memory
+hierarchy.
+
+\paragraph{Metrics and protocol.}
+We report, as functions of incremental ingestion steps: query latency by window
+width (the three placement methods $\times$ narrow/wide windows), throughput in
+queries per second (QPS), per-tier memory utilization (HBM/GDDR/DRAM megabytes and
+live partition count), and migration cost (microseconds and partitions moved per
+sweep). Two index micro-benchmarks isolate the core mechanisms: interval-query
+latency, indexed versus linear, on a $500$K-edge partition
+(\S\ref{sec:architecture}); and partition-selection latency, skip list versus
+linear sweep, over a stream with $\approx 1200$ edges per step and a partition cap
+of $300$, across narrow/medium/wide windows (the structure analyzed in
+\S\ref{sec:selection}). Two further curves stress concurrency: asynchronous
+migration latency, and query latency \emph{during} background migration for the
+three placement methods. Unless stated otherwise each curve reports the mean and
+standard deviation over the final window across three random seeds at $2000$ points
+per seed; correctness throughout is checked against the oracles of
+\S\ref{sec:validation}.
 
 % =============================================================================
 \section{Evaluation}
