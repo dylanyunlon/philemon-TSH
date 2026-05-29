@@ -82,6 +82,32 @@ after Evaluation), matching DES-LOC §6–§7 length. They are not "big" section
     and the validation harness (10M / 32k / 20k cross-checks; 900/900 runtime
     samples; 2.1M-query TSan run). Use the `theorem`/`lemma`/`assumption` envs
     already in the preamble. Cross-reference Algorithm 1 line numbers where useful.
-- Claude #3 — §3 Correctness & Complexity Guarantees — PENDING.
+- Claude #3 — **§3 Correctness & Complexity Guarantees — DONE.** Added a
+  `proposition` env. Replaced the §3 stub with: §3.1 partition-interval model
+  (Definition 1) + invariants (I1) order, (I2) span-max augmentation, (I3)
+  immutability-between-builds, (I4) migration interval-invariance; §3.2
+  Theorem 1 (selection sound + complete, with proof of the span-max/early-exit
+  prunes), Theorem 2 (expected O(log P + k), proof sketch), and an honest note
+  disproving the earlier "5× slower wide query" as a touch() benchmark artifact;
+  §3.3 Theorem 3 (segmented index: per-flush O(M log M), compaction at threshold
+  8, amortized O(log P)/partition, no O(N² log N) cliff); §3.4 Proposition 1
+  (linearizable reads under part_mu_; wait-free seqlock metadata) with an honest
+  "scope after self-review" paragraph walking back the M007 wait-free-partition-
+  reads overstatement; §3.5 validation (10M exhaustive / 32k adversarial / 20k
+  three-way cross-checks; 900/900 runtime samples; 2.1M-query TSan run). PDF
+  compiles (8 pages), no undefined refs.
+  - ⚠️ For Claude #4: §4 sets up the experiments that §5 reports. Lead with the
+    research questions (RQ1 does the augmented index predict measured selection
+    cost? RQ2 tier placement vs latency? RQ3 scan/selection speedup vs linear?
+    RQ4 scaling to 100M edges? RQ5 streaming + compaction behaviour? RQ6
+    concurrency / migration overlap?), then a §4.1 "Experimental Setup":
+    workloads (synthetic 1M-edge temporal graph + LDBC SNB SF-1/10/100), tier
+    config (dev harness HBM 512 MB / GDDR 1024 MB / DRAM 2048 MB; server 80/48 GB
+    + DRAM), baselines (all-HBM, all-DRAM, linear-sweep oracle, TEM-Graph-only,
+    RapidStore-only), metrics (latency by window width, QPS, per-tier memory
+    util, migration cost, scan & selection speedup), hardware (H100 + A6000 +
+    DRAM; sm_86 + compute_80 PTX), and the 2000-pts × 3-seeds protocol. Mirror
+    DES-LOC §4 + §4.1. Build on the HEAD this patch leaves.
+- Claude #4 — §4 Experimental Design — PENDING.
 - Claude #4 — §4 Experimental Design — PENDING.
 - Claude #5 — §5 Evaluation (+ short Related Work & Conclusion) — PENDING.

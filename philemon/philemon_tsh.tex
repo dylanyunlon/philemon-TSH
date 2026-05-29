@@ -95,6 +95,7 @@
 % ---- theorem environments (used by Section 3) --------------------------------
 \newtheorem{theorem}{Theorem}
 \newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
 \newtheorem{assumption}{Assumption}
 \theoremstyle{definition}
 \newtheorem{definition}{Definition}
@@ -453,24 +454,180 @@ paths.
 \section{Correctness and Complexity Guarantees}
 \label{sec:guarantees}
 % =============================================================================
-% --- Claude #3 fills this section ---
-% Template analogue: DES-LOC Section 3 (Convergence Guarantees).
-% Required structure:
-%   - Assumptions/Invariants (analogue of Assumptions 1-3): partitions sorted by
-%     ts_lo on flush; closed intervals; span-max >= every member ts_hi.
-%   - Theorem (selection cost & soundness): augmented skip-list overlaps(lo,hi)
-%     is O(log P + k); the span_max < lo prune is sound (every interval in a
-%     skipped run ends before lo). (analogue of Theorem 1.)
-%   - Amortization analysis (analogue of the psi-factor boundary analysis):
-%     per-flush O(M log M) segment build; compaction at kCompactThreshold = 8
-%     gives amortized build, no O(N^2 log N) cliff.
-%   - SeqLock read-consistency statement (torn-read detection).
-%   - Validation harness (analogue of the Fig. 1 toy problem): 10M exhaustive +
-%     32k random/adversarial + 20k three-way cross-checks; 900/900 runtime
-%     samples by alloc_id; 2.1M-query TSan run, no race.
-% Grounding: src/core/partition_skiplist.hpp, src/bench/skiplist_selftest.cpp,
-%   src/core/seqlock.hpp; REVIEW_M013_M014.md.
-\todoclaude{Claude \#3: Correctness and Complexity Guarantees (\S\ref{sec:guarantees}).}
+% --- Claude #3 ---  (template analogue: DES-LOC Section 3, "Convergence Guarantees")
+
+Section~\ref{sec:system} asserts operationally that indexed partition selection
+returns the same partitions as an exhaustive sweep, runs in $O(\log P + k)$, stays
+cheap under streaming ingestion, and reads consistently during concurrent
+migration. This section makes those claims precise. We focus on the
+partition-\emph{selection} index---the augmented skip list and its segmented
+form---and on read consistency; the per-partition interval scan reduces to a
+sorted-range binary search and is not restated. In keeping with the upstream
+project's self-review tradition, we are explicit about what is \emph{not}
+guaranteed as well. Concretely we establish: that the augmented skip-list
+selection is sound and complete (Theorem~\ref{thm:sound}) and runs in expected
+$O(\log P + k)$ (Theorem~\ref{thm:cost}); that under streaming the segmented index
+holds the amortized build cost to $O(\log P)$ per partition, avoiding the
+$O(N^2\log N)$ cost of monolithic rebuilds (Theorem~\ref{thm:amort}); and that
+query results are linearizable under concurrent migration, with the sequence lock
+providing wait-free reads of the metadata it guards (Proposition~\ref{prop:read}).
+A validation harness, the analogue of the DES-LOC toy problem, certifies all of
+these empirically (\S\ref{sec:validation}).
+
+\subsection{Partition-Interval Model and Invariants}
+\label{sec:model}
+
+\begin{definition}[Partition, window, overlap]
+A temporal partition $P$ is an interval $[\mathrm{lo}(P),\mathrm{hi}(P)]$ together
+with its edge set, where $\mathrm{lo}(P)$ is the minimum $\mathrm{ts\_start}$ and
+$\mathrm{hi}(P)$ the maximum $\mathrm{ts\_end}$ over its edges. A query window is
+$Q=[\ell,h]$. We say $P$ \emph{overlaps} $Q$ iff
+$\mathrm{lo}(P)\le h \,\wedge\, \mathrm{hi}(P)\ge \ell$, and define the
+\emph{selection set} $S(Q)=\{P: P \text{ overlaps } Q\}$. The full subgraph result
+is $\bigcup_{P\in S(Q)}\{e\in P : [e.\mathrm{ts\_start}, e.\mathrm{ts\_end}]\cap Q \neq \emptyset\}$.
+\end{definition}
+
+The selection index relies on four invariants that the bridge maintains.
+\textbf{(I1) Order.} \textsc{Flush} emits partitions in non-decreasing
+$\mathrm{lo}$ and sorts each partition's edges by
+$(\mathrm{ts\_start},\mathrm{ts\_end})$.
+\textbf{(I2) Augmentation.} Every level-$L$ forward pointer $u\!\rightarrow\!v$ in
+the skip list carries $\mathrm{span\_max}[L]=\max\{\mathrm{hi}(P): P \text{ in the
+run } [u,v) \text{ that the pointer spans}\}$---the skip-list form of an interval
+tree's subtree-maximum~\citep[\S14.3]{clrs2009}.
+\textbf{(I3) Immutability between builds.} A skip list is built wholesale and is
+immutable until the next flush; the segmented index appends one immutable segment
+per flush.
+\textbf{(I4) Migration interval-invariance.} \textsc{MigrateSweep} changes only a
+partition's residency tier, never its endpoints, so migrations never alter $S(Q)$;
+only \textsc{Flush} rebuilds the index.
+
+\subsection{Soundness, Completeness, and Cost of Selection}
+\label{sec:selection}
+
+\begin{theorem}[Selection is sound and complete]
+\label{thm:sound}
+For any window $[\ell,h]$, \textsc{Overlaps}$(\ell,h)$ returns exactly $S([\ell,h])$.
+\end{theorem}
+\begin{proof}
+A node is reported only after the explicit test that its interval overlaps
+$[\ell,h]$, so every reported partition overlaps the window (\emph{soundness}).
+For \emph{completeness}, the walk omits a partition only through one of two prunes.
+\emph{(a) Span-max skip:} a level-$L$ pointer with $\mathrm{span\_max}[L]<\ell$ is
+followed without descending; by (I2) every partition in the run it spans has
+$\mathrm{hi}<\ell$ and hence fails $\mathrm{hi}\ge\ell$, so none overlaps.
+\emph{(b) Early exit:} the walk halts at the first base-level node with
+$\mathrm{lo}>h$; by (I1) all later nodes also have $\mathrm{lo}>h$ and hence fail
+$\mathrm{lo}\le h$, so none overlaps. No overlapping partition is pruned.
+\end{proof}
+
+\begin{theorem}[Selection cost]
+\label{thm:cost}
+\textsc{Overlaps}$(\ell,h)$ runs in expected $O(\log P + k)$, where $P=|\mathcal{P}|$
+and $k=|S([\ell,h])|$.
+\end{theorem}
+\begin{proof}[Proof sketch]
+A Pugh skip list over $P$ nodes has expected height $O(\log P)$, and a search
+descends and advances along $O(\log P)$ pointers~\citep{pugh1990skiplists}. Each
+span-max skip dismisses an entire spanned run in $O(1)$ by a single comparison
+(I2), and each of the $k$ reported partitions contributes $O(1)$; the early-exit
+condition (I1) prevents the walk from continuing past the last node that can
+overlap. This is the skip-list analogue of interval-tree stabbing, which reports
+all $k$ intervals containing a query point in $O(\log P + k)$.
+\end{proof}
+
+\paragraph{On the corrected performance claim.}
+An early measurement reported the indexed walk as ${\sim}5\times$ slower than a
+linear sweep for wide windows. Direct profiling disproved this: at $P=8000$ the
+pure selection cost is $3.7\,\mu$s (indexed) versus $8.0\,\mu$s (linear) even for
+the widest window. The discrepancy was a benchmark artifact---the indexed path
+\texttt{touch}es every selected partition while the linear oracle did not, so the
+cost of $k$ \texttt{touch} calls was miscredited to the index. A width-ratio
+fallback added in response was removed once the artifact was identified;
+\S\ref{sec:evaluation} reports the corrected numbers.
+
+\subsection{Streaming Amortization}
+\label{sec:amort}
+
+A single monolithic skip list costs $O(P\log P)$ to build. Rebuilding it on each
+of $N$ flushes, with $P$ growing as edges arrive, costs
+$\sum_i O(P_i\log P_i)=O(N^2\log N)$---a rebuild cliff under streaming. The
+segmented index avoids it.
+
+\begin{theorem}[Amortized build under streaming]
+\label{thm:amort}
+With the segmented index, a flush adding $M$ partitions builds its segment in
+$O(M\log M)$, and a compaction---triggered when the live segment count reaches
+$\texttt{kCompactThreshold}=8$---merges all segments into one in $O(P\log P)$.
+Amortized over the flushes between compactions, the build cost is $O(\log P)$ per
+partition. Selection stays correct: a query fans out over the $\le 8$ live
+segments and unions their results, each segment satisfying
+Theorem~\ref{thm:sound}.
+\end{theorem}
+
+This is the log-structured-merge discipline~\citep{oneil1996lsm}: immutable
+segments with threshold-triggered background compaction, as in LevelDB's
+SSTables~\citep{leveldb}. Selection cost becomes $O(S\,(\log P + k_s))$ for $S$
+live segments; under monotone flushes $S=O(\log N)$ between compactions, and the
+union of per-segment results is exactly $S(Q)$ since the segments partition
+$\mathcal{P}$.
+
+\subsection{Read Consistency Under Concurrent Migration}
+\label{sec:consistency}
+
+\begin{proposition}[Linearizable reads; wait-free metadata]
+\label{prop:read}
+\textsc{Query} reads $\mathcal{P}$ and the selection index under a shared lock on
+$\texttt{part\_mu\_}$, which \textsc{Flush} holds exclusively during a rebuild.
+A query therefore observes either the pre-flush or the post-flush partition set,
+never a partially rebuilt one: results are linearizable with respect to flushes.
+Concurrent migrations are harmless by (I4)---a migration changes only residency
+tiers, so a partition's membership in $S(Q)$ cannot change mid-query even though
+its location may. The sequence lock guarding the partition-metadata fields touched
+during migration provides wait-free reads: \textsc{ReadBegin}/\textsc{ReadRetry}
+never block a writer, and a reader retries only on a detected concurrent write.
+\end{proposition}
+
+\paragraph{Honest scope (after self-review).}
+The seqlock retry inside \textsc{Query} is in fact redundant, because
+$\texttt{part\_mu\_}$ already serializes readers against a rebuild; an early
+description of ``wait-free partition reads'' overstated the guarantee. The
+operative facts are (i) linearizability of selection under $\texttt{part\_mu\_}$
+and (ii) wait-free, torn-read-detecting reads of the migration-metadata fields via
+the seqlock primitive. We surface this distinction rather than assert the stronger
+original claim; a fully lock-free reader path that relies on the atomic
+$\texttt{index\_epoch\_}$ to detect staleness is left as future work.
+
+\subsection{Validation}
+\label{sec:validation}
+
+The guarantees above are certified by an exhaustive and concurrent harness rather
+than by a single illustrative example.
+\begin{itemize}
+\item \textbf{Exhaustive selection.} Over a deliberately small endpoint space---small
+  enough that random queries exercise essentially every structural skip-list
+  layout---\textsc{Overlaps} is cross-checked against a brute-force $O(P)$ oracle
+  on $10{,}000{,}000$ queries with $0$ mismatches (Theorem~\ref{thm:sound}).
+\item \textbf{Randomized and adversarial.} The \texttt{skiplist\_selftest} target
+  runs $32{,}000$ queries over random and degenerate inputs (point, empty, and
+  boundary windows) against the same oracle with $0$ mismatches.
+\item \textbf{Three-way streaming.} Under a stream of flushes with compaction,
+  $20{,}000$ queries are checked three ways---segmented index versus a single
+  whole-list index versus brute force---with $0$ mismatches
+  (Theorem~\ref{thm:amort}); the $0.24$--$0.28$\,ms latency spikes coincide
+  exactly with compaction events, as the LSM model predicts.
+\item \textbf{Runtime equivalence.} During the end-to-end benchmark the indexed
+  path is sampled against the linear oracle every $20$ steps ($900$ samples) and
+  compared by collision-free \texttt{alloc\_id}; all $900$ agree.
+\item \textbf{Concurrency.} A thread sanitizer over $2{,}100{,}000$ concurrent
+  queries with four reader threads and a live flush/compact writer reports no
+  data races and no crashes, confirming that $\texttt{part\_mu\_}$ correctly
+  serializes the rebuild against readers (Proposition~\ref{prop:read}).
+\end{itemize}
+Together these certify selection correctness (Theorems~\ref{thm:sound},
+\ref{thm:amort}), are consistent with the $O(\log P + k)$ cost
+(Theorem~\ref{thm:cost}, quantified in \S\ref{sec:evaluation}), and exercise the
+read-consistency guarantee (Proposition~\ref{prop:read}) under contention.
 
 % =============================================================================
 \section{Experimental Design}
