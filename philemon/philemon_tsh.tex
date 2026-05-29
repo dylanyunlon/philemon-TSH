@@ -73,6 +73,12 @@
 @misc{temgraph,
   title={{TEM-Graph}: Temporal Interval Index for Dynamic Subgraph Queries},
   howpublished={Upstream component (see project repository)}, note={Software}}
+@misc{leveldb,
+  title={{LevelDB}}, author={{Google}},
+  howpublished={\url{https://github.com/google/leveldb}}, note={Software}}
+@misc{cccl,
+  title={{CCCL}: {CUDA} Core Compute Libraries ({Thrust}, {CUB}, libcu++)},
+  author={{NVIDIA}}, howpublished={\url{https://github.com/NVIDIA/cccl}}, note={Software}}
 \end{filecontents*}
 
 \usepackage[margin=1in]{geometry}
@@ -275,24 +281,173 @@ snapshot protocol from RapidStore~\citep{rapidstore}.
 \section{The Philemon-TSH System}
 \label{sec:system}
 % =============================================================================
-% --- Claude #2 fills this section ---
-% Template analogue: DES-LOC Section 2 (DES-LOC Algorithm).
-% Required structure:
-%   \subsection{Separation of Access Timescales}   (analogue of DES-LOC 2.1
-%       "Separation of Optimizer-State Timescales") -- motivate why hot/dense
-%       intervals belong in HBM and cold/sparse in DRAM; the access-frequency
-%       and temporal-density signals the MigrationScheduler uses; "from C, the
-%       good example" lineage: RapidStore snapshot_edges -> TieredAllocator.
-%   \subsection{The Philemon-TSH Architecture}  (analogue of DES-LOC 2.2
-%       "DES-LOC Algorithm") -- TieredAllocator waterfall, TemporalBridge
-%       ingest/partition/query, MigrationScheduler sweep, SeqLock read path,
-%       SlabAllocator. Present the ingest+query pipeline as Algorithm 1
-%       (\begin{algorithm}...\end{algorithm}), mirroring DES-LOC's Algorithm 1.
-% Grounding: src/core/tiered_allocator.hpp, src/bridge/temporal_bridge.hpp,
-%   src/scheduler/migration_scheduler.hpp, src/core/seqlock.hpp,
-%   src/core/slab_allocator.hpp, src/core/interval_index.hpp,
-%   src/core/partition_skiplist.hpp; REVIEW_M005_M006.md, REVIEW_M007_M008.md.
-\todoclaude{Claude \#2: The Philemon-TSH System (\S\ref{sec:system}).}
+% --- Claude #2 ---  (template analogue: DES-LOC Section 2, "DES-LOC Algorithm")
+
+Philemon-TSH organizes a temporal graph as a set of \emph{temporal partitions}.
+Each partition holds a contiguous, sorted run of timestamped edges together with
+a per-partition interval index and a residency tier, and carries an interval
+$[\mathrm{ts\_lo},\mathrm{ts\_hi}]$ spanning its earliest start and latest end.
+Over this abstraction the system composes two mechanisms on orthogonal axes:
+a \emph{residency schedule} that decides \emph{where} a partition lives in the
+HBM/GDDR/DRAM hierarchy (\S\ref{sec:timescales}), and a \emph{selection index}
+that decides \emph{whether} a partition is touched by a query
+(\S\ref{sec:architecture}). Following the project's ``from \texttt{C}, the good
+example'' discipline, each component adapts a named pattern from a production
+system---RapidStore's \texttt{snapshot\_edges} traversal abstraction is the
+seed~\citep{rapidstore}---rather than being designed from scratch.
+
+\subsection{Separation of Access Timescales}
+\label{sec:timescales}
+
+A temporal partition $P$ is touched by a query only when its interval meets the
+query window, so the rate at which $P$ enters and leaves the active working
+set---its \emph{access timescale}---determines how valuable a fast residency tier
+is for it. Two signals govern that timescale. The first is \emph{temporal
+density}
+\[
+  \rho(P) \;=\; \frac{\text{edge\_count}(P)}{\mathrm{ts\_hi}(P) - \mathrm{ts\_lo}(P) + 1}.
+\]
+A dense partition packs many edges into a narrow time range, so a sliding window
+dwells on it briefly but intensely; a sparse partition spreads few edges over a
+wide range and is read faintly but for a long stretch of the timeline. The second
+is \emph{access frequency}: every read increments a partition's lock-free
+\texttt{access\_count} and stamps \texttt{last\_access\_ns}, recording how often
+and how recently it was used. Dense, recently touched partitions form the
+fast-churning hot set and must be cheap to reach (HBM); sparse, stale partitions
+are stable and tolerate the higher latency of DRAM because they are read rarely.
+This is the residency analogue of the separation of optimizer-state timescales in
+desynchronized training, where fast-moving parameters are averaged often and
+slow-moving second moments rarely: here it is the \emph{residency tier}, not the
+synchronization period, that differs along the partition's access timescale.
+
+Two places act on this separation. \textbf{Flush-time partitioning} makes density
+explicit. When the bridge flushes its ingest buffer it computes the average
+density $\bar\rho$ over the batch and walks the start-sorted edges in a
+look-ahead window; a region whose local density exceeds $2\bar\rho$ is cut into
+\emph{smaller} partitions sized to fit HBM, while a region below $0.5\bar\rho$ is
+coalesced into a \emph{larger} partition destined for DRAM. This density-adaptive
+granularity follows TEM-Graph's density-aware index construction~\citep{temgraph}.
+\textbf{Runtime migration} acts on frequency: a background scheduler re-tiers
+partitions by a hotness score $h(P)$ combining \texttt{access\_count} and
+recency, promoting hot partitions toward HBM and demoting cold ones toward DRAM,
+subject to per-tier capacity budgets (on the target server, $80$\,GB HBM on the
+H100, $48$\,GB GDDR on the A6000, and host DRAM behind PCIe). Because the
+scheduler runs deferred and batched---the grouped, deferred-hook pattern of
+Megatron-LM's data-parallel reducer~\citep{shoeybi2019megatron}---it keeps
+migration off the query critical path.
+
+\subsection{The Philemon-TSH Architecture}
+\label{sec:architecture}
+
+\paragraph{Tiered allocator.}
+\texttt{Allocate}$(n,\text{preferred})$ tries to reserve $n$ bytes in the
+preferred tier and, if its budget is exhausted, waterfalls
+HBM\,$\rightarrow$\,GDDR\,$\rightarrow$\,DRAM, each reservation a lock-free
+compare-and-swap on the tier's used-bytes counter. This dispatch-by-availability
+mirrors NCCL's \texttt{ncclMemAlloc}, which falls through
+\texttt{cuMemCreate}/\texttt{cuMemMap}/\texttt{malloc} by
+capability~\citep{nccl}; in production, HBM and GDDR map to device allocations on
+the H100 and A6000 and DRAM to pinned host memory, while the CPU-only development
+harness simulates all three from DRAM. Per-allocation metadata---size, home tier,
+base pointer, and atomic \texttt{access\_count} and \texttt{last\_access\_ns}---lives
+in a registry guarded by a shared mutex: structural mutations
+(\texttt{allocate}/\texttt{deallocate}/\texttt{migrate}) take it exclusively,
+ordinary reads share it, and \texttt{touch} takes no lock at all, being a single
+relaxed atomic fetch-add following NCCL's atomic refcount and CCCL's lock-free
+shared block pointer~\citep{cccl}. Each tier routes small allocations
+($\le 512$\,KB) through a per-tier slab allocator whose pages carry a $64$-bit
+free mask; a slot is claimed in $O(1)$ via \texttt{\_\_builtin\_ctzll} on the mask
+(NCCL's page-and-bitmask pooling), freed slots coalesce, and \texttt{compact}
+returns wholly empty pages to the OS---the block-coalescing idiom of the PyTorch
+caching allocator~\citep{paszke2019pytorch} over a TensorFlow-Arena
+bump-pointer fast path~\citep{abadi2016tensorflow}. Fragmentation thus stays near
+zero across repeated \texttt{migrate} cycles.
+
+\paragraph{Temporal bridge.}
+The bridge realizes interval\,$\rightarrow$\,partition\,$\rightarrow$\,tier.
+\texttt{Ingest} appends edges to a buffer; \texttt{Flush} sorts the buffer by
+$(\mathrm{ts\_start},\mathrm{ts\_end})$, cuts it into the density-adaptive
+partitions of \S\ref{sec:timescales}, allocates each through the tiered
+allocator, and builds a per-partition \emph{interval index}---two sorted views of
+the partition's edges, one by start and one by end, the dual-ordered-set pattern
+of the PyTorch \texttt{BlockPool}~\citep{paszke2019pytorch}---so an in-partition
+contains/contained/overlaps query is answered in $O(\log N + k)$ by binary
+search rather than an $O(N)$ linear scan. The in-partition scan itself is
+LevelDB's two-level \texttt{Seek}~\citep{leveldb} over Thrust's
+\texttt{lower\_bound}~\citep{cccl}: a binary search to the first edge with
+$\mathrm{ts\_start}\ge\ell$, then a forward walk with early termination once
+$\mathrm{ts\_start}>h$.
+
+\paragraph{Selection index.}
+Answering a query first requires finding \emph{which} partitions meet the window.
+A linear sweep is $O(P)$ and grows without bound under streaming ingestion, so the
+bridge holds an augmented interval skip list~\citep{pugh1990skiplists}: nodes
+ordered by $\mathrm{ts\_lo}$, with every forward pointer carrying the maximum
+$\mathrm{ts\_hi}$ over the run of nodes it spans---the skip-list counterpart of an
+interval tree's subtree-maximum augmentation~\citep[\S14.3]{clrs2009}.
+\texttt{Overlaps}$(\ell,h)$ walks the bottom level but, at higher levels, skips
+any run whose span-maximum is below $\ell$ (no member can reach the window) and
+stops once a node's $\mathrm{ts\_lo}$ exceeds $h$, returning the $k$ overlapping
+partitions in $O(\log P + k)$. To keep this cheap under streaming, the index is
+\emph{segmented} in the log-structured-merge style~\citep{oneil1996lsm}: each
+flush builds one immutable segment over only its $M$ new partitions in
+$O(M\log M)$, queries fan out across segments, and a compaction merges them into a
+single segment once their count crosses a threshold of eight. The index is
+therefore never rebuilt wholesale, sidestepping the $O(N^2\log N)$ cost of
+re-augmenting a monolithic structure on every flush.
+
+\paragraph{Read path and migration.}
+The query read path is wait-free. Partition metadata is protected by a sequence
+lock: a query samples the sequence number (even $\Rightarrow$ no writer active),
+selects and scans the matching partitions, and retries only if a concurrent
+migration left the sequence odd or changed; it never blocks, and the migrating
+writer never waits on readers, eliminating the writer starvation of the
+shared-mutex read path it replaces (the Linux-kernel seqlock and NCCL sequence
+numbers). Cross-tier moves are issued by the background scheduler and executed
+double-buffered and asynchronously through a scope-safe handle---an RAII
+\texttt{TierPtr} in the manner of PyTorch's \texttt{CUDAStreamGuard}~\citep{paszke2019pytorch}---so
+a migrating copy overlaps in-flight queries, with an event fence enforcing
+read-after-write ordering. Algorithm~\ref{alg:philemon} summarizes the three
+paths.
+
+\begin{algorithm}[t]
+\caption{Philemon-TSH ingest, query, and background migration}
+\label{alg:philemon}
+\begin{algorithmic}[1]
+\STATE \textbf{Shared state:} partitions $\mathcal{P}$; segmented selection index $\mathcal{I}$; tiered allocator $\mathcal{A}$; sequence lock $\sigma$
+\STATE
+\STATE \textbf{procedure} \textsc{Flush}( ) \COMMENT{fires when the ingest buffer $B$ overflows}
+\STATE \quad sort $B$ by $(\mathrm{ts\_start},\mathrm{ts\_end})$; \quad $\bar\rho \gets |B| / (\max\,\mathrm{ts\_start} - \min\,\mathrm{ts\_start})$
+\FOR{each density-adaptive partition $P=[\mathrm{ts\_lo},\mathrm{ts\_hi}]$ cut from $B$ \quad ($\rho>2\bar\rho$: smaller; $\rho<0.5\bar\rho$: larger)}
+  \STATE $P.\mathrm{alloc} \gets \mathcal{A}.\textsc{Allocate}(\mathrm{size}(P),\ \mathrm{HBM})$ \COMMENT{waterfall HBM\,$\to$\,GDDR\,$\to$\,DRAM}
+  \STATE build the dual-sorted interval index for $P$ \COMMENT{by start, by end}
+\ENDFOR
+\STATE append one immutable segment over the new partitions to $\mathcal{I}$ \COMMENT{$O(M\log M)$}
+\IF{$\mathcal{I}$ holds $> 8$ segments}
+  \STATE compact $\mathcal{I}$ into one segment
+\ENDIF
+\STATE
+\STATE \textbf{procedure} \textsc{Query}($\ell,h$, cb)
+\REPEAT
+  \STATE $s \gets \sigma.\textsc{ReadBegin}()$ \COMMENT{spin while a writer is active}
+  \STATE $\mathrm{slots} \gets \mathcal{I}.\textsc{Overlaps}(\ell,h)$ \COMMENT{span-max pruning, $O(\log P + k)$}
+  \FORALL{$\mathrm{slot} \in \mathrm{slots}$}
+    \STATE $P \gets \mathcal{P}[\mathrm{slot}]$; \quad $i \gets \textsc{LowerBound}(P.\mathrm{edges},\ \ell)$ \COMMENT{$O(\log N)$}
+    \STATE emit $P$'s edges in $[\ell,h]$ from $i$; \quad $\mathcal{A}.\textsc{Touch}(P.\mathrm{alloc})$ \COMMENT{lock-free}
+  \ENDFOR
+\UNTIL{$\lnot\,\sigma.\textsc{ReadRetry}(s)$} \COMMENT{retry only on a torn read}
+\STATE
+\STATE \textbf{procedure} \textsc{MigrateSweep}( ) \COMMENT{background thread}
+\FORALL{$P \in \mathcal{P}$}
+  \STATE $h(P) \gets \mathrm{hotness}(P.\mathrm{access\_count},\ P.\mathrm{last\_access})$
+  \IF{$h(P)$ high $\,\land\, P \notin \mathrm{HBM} \,\land\,$ HBM budget available}
+    \STATE $\sigma.\textsc{WriteLock}()$;\ \ $\mathcal{A}.\textsc{Migrate}(P,\ \mathrm{HBM})$;\ \ $\sigma.\textsc{WriteUnlock}()$
+  \ELSIF{$h(P)$ low}
+    \STATE $\sigma.\textsc{WriteLock}()$;\ \ $\mathcal{A}.\textsc{Migrate}(P,\ \text{next colder tier})$;\ \ $\sigma.\textsc{WriteUnlock}()$
+  \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
 
 % =============================================================================
 \section{Correctness and Complexity Guarantees}

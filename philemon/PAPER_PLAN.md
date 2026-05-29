@@ -63,7 +63,25 @@ after Evaluation), matching DES-LOC §6–§7 length. They are not "big" section
     half-life-style intuition but for *memory residency* (hot intervals → HBM),
     not optimizer momenta. Cite the tiered-allocator waterfall + the "from C, the
     good example" lineage (RapidStore `snapshot_edges` → TieredAllocator).
-- Claude #2 — §2 The Philemon-TSH System — PENDING.
+- Claude #2 — **§2 The Philemon-TSH System — DONE.** Replaced the §2 stub with
+  two subsections: §2.1 "Separation of Access Timescales" (temporal density
+  $\rho(P)$ + access frequency as the hot/cold residency signal; flush-time
+  density-adaptive partitioning + runtime hotness migration; RapidStore →
+  TieredAllocator lineage) and §2.2 "The Philemon-TSH Architecture" (tiered
+  allocator waterfall + lock-free touch + slab; temporal bridge ingest/flush +
+  dual-sorted interval index + LevelDB/Thrust scan; augmented + segmented
+  selection index O(log P + k); seqlock wait-free read path + async migration),
+  with **Algorithm 1** (Flush / Query / MigrateSweep). Added `leveldb` + `cccl`
+  bib keys. PDF compiles (6 pages), no undefined refs.
+  - ⚠️ For Claude #3: §3 states the *correctness & complexity* guarantees that
+    §2 asserts operationally. Lead with the invariants (partitions start-sorted
+    on flush; closed intervals; span-max ≥ every member ts_hi), then the
+    selection theorem (`overlaps` is O(log P + k); the `span_max < lo` prune is
+    sound), the segmented-index amortization (per-flush O(M log M), compaction at
+    threshold 8 ⇒ no O(N² log N) cliff), the seqlock read-consistency statement,
+    and the validation harness (10M / 32k / 20k cross-checks; 900/900 runtime
+    samples; 2.1M-query TSan run). Use the `theorem`/`lemma`/`assumption` envs
+    already in the preamble. Cross-reference Algorithm 1 line numbers where useful.
 - Claude #3 — §3 Correctness & Complexity Guarantees — PENDING.
 - Claude #4 — §4 Experimental Design — PENDING.
 - Claude #5 — §5 Evaluation (+ short Related Work & Conclusion) — PENDING.
