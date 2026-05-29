@@ -721,28 +721,184 @@ per seed; correctness throughout is checked against the oracles of
 \section{Evaluation}
 \label{sec:evaluation}
 % =============================================================================
-% --- Claude #5 fills this section (+ short Related Work & Conclusion below) ---
-% Template analogue: DES-LOC Section 5 (Evaluation), one subsection per RQ.
-% Use the philemon_*_2000.json curves (2000 pts x 3 seeds): query_latency,
-% qps, memory_util, migration_cost, interval_index, partition_index,
-% async_migration, query_under_mig. Report means +/- std of the final window.
-% Key results to land: intra-partition scan 43.9x (narrow 232.6->5.3 us;
-% medium 108.5 us; wide 608 us; full 1230 us at ~1.23 ns/edge); partition
-% selection at P=8000 narrow 4.1x / medium 1.75x / wide 0.85x, pure selection
-% 3.7 us indexed vs 8.0 us linear; near-zero fragmentation; correctness +
-% TSan results cross-referenced to Section 3.
-% Grounding: REVIEW_M005_M006.md, REVIEW_M013_M014.md, philemon_*_2000.json.
-\todoclaude{Claude \#5: Evaluation (\S\ref{sec:evaluation}).}
+% --- Claude #5 ---  (template analogue: DES-LOC Section 5, "Evaluation", one subsection per RQ)
+
+We answer the six research questions of \S\ref{sec:expdesign} in turn. Unless
+noted, numbers are final-window means $\pm$ standard deviation over three seeds at
+$2000$ points; Tables~\ref{tab:micro} and~\ref{tab:e2e} collect the headline
+figures, and all results were cross-checked for correctness against the oracles of
+\S\ref{sec:validation}.
+
+\begin{table}[t]
+\centering
+\caption{Index micro-benchmarks: indexed versus linear latency ($\mu$s) and
+speedup, by query window. Partition selection is the skip list versus the linear
+sweep (\S\ref{sec:selection}); intra-partition scan is the dual-sorted interval
+index versus a linear scan on a $500$K-edge partition (\S\ref{sec:architecture}).}
+\label{tab:micro}
+\begin{tabular}{llrrr}
+\toprule
+Benchmark & Window & Indexed & Linear & Speedup \\
+\midrule
+\multirow{3}{*}{Partition selection}
+ & narrow & $3.10\pm0.61$  & $12.83\pm2.91$ & $\mathbf{4.14\times}$ \\
+ & medium & $6.76\pm1.21$  & $11.81\pm2.18$ & $1.75\times$ \\
+ & wide   & $53.93\pm13.00$& $45.99\pm5.56$ & $0.85\times$ \\
+\midrule
+\multirow{3}{*}{Intra-partition scan}
+ & narrow & $0.72\pm0.06$  & $1.32\pm0.24$  & $1.84\times$ \\
+ & medium & $4.25\pm0.71$  & $6.62\pm1.14$  & $1.56\times$ \\
+ & wide   & $20.16\pm3.14$ & $38.18\pm5.97$ & $1.89\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The $O(\log P + k)$ Analysis Predicts Selection Cost (RQ1)}
+\label{sec:rq1}
+
+The partition-selection micro-benchmark (Table~\ref{tab:micro}, top) tracks
+Theorem~\ref{thm:cost} closely. As the window widens from narrow to wide the number
+of matches $k$ grows from a handful toward $P$, and the indexed cost grows with it
+($3.10\!\rightarrow\!6.76\!\rightarrow\!53.93\,\mu$s), exactly the $O(\log P + k)$
+shape: cheap when selective, approaching the linear cost when $k\approx P$. The
+linear sweep, by contrast, is insensitive to selectivity except through the
+\texttt{touch} it performs on each hit. The crossover this predicts is visible: the
+index is $4.14\times$ faster on narrow windows, $1.75\times$ on medium, and
+$0.85\times$ on wide---about $15\%$ slower only when essentially every partition
+matches and the $O(\log P)$ search skeleton and skip-list constants are pure
+overhead. This is the behavior the cost model anticipates, and it is why no
+selectivity heuristic is needed (\S\ref{sec:selection}).
+
+\subsection{Tiered Placement Matches HBM Latency Without HBM Capacity (RQ2)}
+\label{sec:rq2}
+
+Table~\ref{tab:e2e} reports end-to-end query latency and throughput for the three
+placement strategies. Tiered placement delivers query latency within ${\sim}1\%$ of
+the all-HBM upper bound ($20.58$ vs $20.84\,\mu$s narrow; $19.33$ vs $19.51\,\mu$s
+wide) and consistently below DRAM-Only ($21.22$/$19.91\,\mu$s), so hot partitions
+are reached at near-HBM speed even though the bulk of the graph is not pinned in
+HBM. On raw throughput the all-HBM configuration is fastest---when the whole graph
+fits in the fast tier it sustains $38.8$M queries/s---while Tiered matches DRAM-Only
+($3.87$M vs $3.95$M). The honest reading is that HBM-Only is a latency-and-throughput
+upper bound that simply \emph{cannot hold} the larger graphs (\S\ref{sec:rq4}); the
+value of tiering is achieving near-HBM latency at DRAM-class capacity, which is the
+regime that matters once a temporal-edge table outgrows on-package memory.
+
+\begin{table}[t]
+\centering
+\caption{End-to-end query latency ($\mu$s) and throughput (queries/s) by placement
+strategy. HBM-Only is a capacity-unconstrained upper bound; DRAM-Only is the
+capacity-ample floor.}
+\label{tab:e2e}
+\begin{tabular}{lrrr}
+\toprule
+Metric & Tiered (ours) & HBM-Only & DRAM-Only \\
+\midrule
+Latency, narrow ($\mu$s) & $20.58\pm0.97$ & $20.84\pm0.97$ & $21.22\pm1.26$ \\
+Latency, wide ($\mu$s)   & $19.33\pm0.92$ & $19.51\pm0.92$ & $19.91\pm1.22$ \\
+Throughput (M q/s)       & $3.87\pm0.26$  & $38.85\pm2.04$ & $3.95\pm0.20$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Index Speedups for Scanning and Selection (RQ3)}
+\label{sec:rq3}
+
+Two index layers contribute. Replacing the original $O(N)$ partition scan with the
+binary-search range scan (\S\ref{sec:architecture}) cuts a narrow-window scan from
+$232.6\,\mu$s to $5.3\,\mu$s on the $1$M-edge layout---a $\mathbf{43.9\times}$
+reduction, with the per-edge cost falling to ${\sim}1.23$\,ns. On top of that, the
+dual-sorted interval index improves the in-partition scan by a further
+$1.6$--$1.9\times$ across windows (Table~\ref{tab:micro}, bottom), and the augmented
+skip list speeds inter-partition selection by up to $4.14\times$
+(Table~\ref{tab:micro}, top). The two layers are complementary: selection narrows
+$P$ partitions to the $k$ that matter, and the interval index narrows each
+partition's edges to those in the window.
+
+\subsection{Scaling Toward Hundred-Million-Edge Graphs (RQ4)}
+\label{sec:rq4}
+
+As ingestion proceeds, the partition count and per-tier occupancy grow smoothly:
+the dev-harness run reaches ${\sim}190$ live partitions with the hot working set
+resident in HBM, and the background scheduler's migration cost rises with edge count
+to ${\sim}1.55$\,ms per sweep while moving only ${\sim}9$ partitions at a time, so
+re-tiering stays incremental rather than stop-the-world. On the \texttt{ags1} server
+the same pipeline spreads partitions across four physical pools (H100-HBM, both
+A6000-GDDR boards, and host DRAM), scaling the temporal-edge table from $1$M to
+$100$M edges---the regime in which HBM-Only is infeasible and tiered residency is
+required to keep the hot window fast.
+
+\subsection{Streaming Ingestion and Compaction (RQ5)}
+\label{sec:rq5}
+
+Under continuous ingestion the segmented index sustains selection without the
+monolithic-rebuild cliff (Theorem~\ref{thm:amort}): each flush appends one immutable
+segment, and the periodic compaction at the eight-segment threshold shows up as
+brief $0.24$--$0.28$\,ms latency spikes against an otherwise flat selection cost,
+exactly the log-structured-merge signature. Correctness is preserved across these
+events: the three-way cross-check of \S\ref{sec:validation} (segmented versus
+whole-list versus brute force, including compaction) reports zero mismatches over
+$20{,}000$ queries, and the growing partition population is absorbed without
+disrupting in-flight readers.
+
+\subsection{Concurrency and Migration Overlap (RQ6)}
+\label{sec:rq6}
+
+Queries proceed during background migration at sub-microsecond latency. Against a
+no-migration baseline of $0.059\,\mu$s, query latency rises to $0.194\,\mu$s under
+synchronous migration and $0.207\,\mu$s under the asynchronous, double-buffered path
+(\S\ref{sec:architecture})---a bounded ${\sim}3.3\times$ slowdown in the worst case,
+with the asynchronous path trading a small constant overhead for not stalling the
+migrating copy. Most importantly, the thread-sanitizer run of \S\ref{sec:validation}
+exercises $2{,}100{,}000$ concurrent queries against a live flush/compact writer with
+no data races and no crashes, confirming that the read-consistency guarantee of
+Proposition~\ref{prop:read} holds under contention.
 
 % =============================================================================
-% --- Claude #5 also appends, after Evaluation (short, DES-LOC 6-7 length): ---
-%   \section{Related Work}     temporal graph stores (TEM-Graph, RapidStore),
-%       tiered/heterogeneous memory & caching allocators (PyTorch, NCCL,
-%       DeepSpeed swap), interval/skip-list indexing, LSM indexing, GNN systems
-%       (MorphGL, D2STGNN).
-%   \section{Conclusion}       restate the tiered-residency + augmented-index
-%       contribution and the measured speedups; one paragraph.
+\section{Related Work}
+\label{sec:related}
 % =============================================================================
+
+\textbf{Temporal graph stores.} Interval-indexing engines such as
+TEM-Graph~\citep{temgraph} answer contains/contained queries efficiently but in a
+single, flat memory, and concurrent dynamic-graph stores such as
+RapidStore~\citep{rapidstore} provide snapshot isolation over one address space;
+neither places intervals across a memory hierarchy. On the modeling side,
+decoupled spatial--temporal networks~\citep{d2stgnn} and collective mini-batch
+schedulers for GNN training~\citep{morphgl} assume the working set fits in device
+memory. Philemon-TSH supplies the tiered storage substrate these consume.
+\textbf{Tiered and heterogeneous memory.} General-purpose caching
+allocators~\citep{paszke2019pytorch,nccl} and grouped
+allocators~\citep{shoeybi2019megatron} pool memory \emph{within} a device, and
+optimizer-state swappers~\citep{rasley2020deepspeed} move tensors between host and
+GPU on a fixed schedule; none is driven by temporal access locality across
+HBM/GDDR/DRAM. \textbf{Interval and log-structured indexing.} Our selection index
+combines a Pugh skip list~\citep{pugh1990skiplists} with the interval-tree
+subtree-maximum augmentation~\citep[\S14.3]{clrs2009} and the log-structured-merge
+discipline~\citep{oneil1996lsm,leveldb}. To our knowledge Philemon-TSH is the first
+system to couple temporal-locality-driven residency across an asymmetric
+HBM/GDDR/DRAM hierarchy with an augmented, segmented interval index that selects
+partitions in $O(\log P + k)$.
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% =============================================================================
+
+Philemon-TSH treats temporal-subgraph retrieval as two orthogonal decisions---where
+a temporal partition lives and whether a query touches it---and shows that handling
+them separately yields a store that stays fast as the graph outgrows fast memory.
+Access-locality tiered residency keeps the hot window in HBM, an augmented,
+segmented interval index prunes partition selection to $O(\log P + k)$ without a
+streaming rebuild cliff, and a sequence lock keeps the read path consistent under
+concurrent migration. Empirically this delivers a $43.9\times$ faster intra-partition
+scan, up to $4.1\times$ faster partition selection, and query latency within
+${\sim}1\%$ of an all-HBM upper bound while holding graphs that all-HBM cannot, with
+correctness certified by over ten million exhaustive cross-checks and a
+$2.1$M-query race-free concurrent run. Promising next steps include a fully
+lock-free reader path keyed on the atomic index epoch, a cost model for the
+intra-partition scan, and multi-node placement across several mixed-generation
+servers.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

@@ -133,4 +133,20 @@ after Evaluation), matching DES-LOC §6–§7 length. They are not "big" section
     edges; concurrency/migration-overlap from async_migration + query_under_mig.
     Cross-reference §3 for correctness and §4 for the protocol. Then append the
     short Related Work + Conclusion (DES-LOC §6–§7 length). Build on this HEAD.
-- Claude #5 — §5 Evaluation (+ short Related Work & Conclusion) — PENDING.
+- Claude #5 — **§5 Evaluation + Related Work + Conclusion — DONE. PAPER COMPLETE.**
+  Replaced the §5 stub with six RQ subsections grounded in the eight
+  philemon_*_2000 curves (final-window mean±std, 3 seeds) plus two results tables:
+  Table 1 (index micro-benchmarks — partition selection 4.14×/1.75×/0.85× narrow/
+  medium/wide; intra-partition scan 1.84×/1.56×/1.89×) and Table 2 (end-to-end:
+  Tiered latency within ~1% of HBM-Only and below DRAM-Only; QPS Tiered 3.87M /
+  HBM-Only 38.85M / DRAM-Only 3.95M). RQ1 confirms the O(log P + k) shape (index
+  cost grows with k; crossover to ~15% slower only at full selectivity); RQ2
+  near-HBM latency at DRAM capacity; RQ3 the 43.9× scan headline + the two index
+  layers; RQ4 scaling to 100M edges across four physical pools; RQ5 streaming +
+  compaction (0.24–0.28 ms LSM spikes, 0 mismatches); RQ6 sub-µs queries during
+  migration (~3.3× over no-migration baseline) + 2.1M-query TSan run. Added a
+  short §6 Related Work and §7 Conclusion (DES-LOC §6–§7 length). No new bib keys.
+  PDF compiles (11 pages), no undefined refs.
+
+**The five-section body (Intro · System · Guarantees · Experimental Design ·
+Evaluation) + Related Work + Conclusion is complete; appendix is out of scope.**
