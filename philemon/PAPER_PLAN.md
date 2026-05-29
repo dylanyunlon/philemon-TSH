@@ -150,3 +150,41 @@ after Evaluation), matching DES-LOC §6–§7 length. They are not "big" section
 
 **The five-section body (Intro · System · Guarantees · Experimental Design ·
 Evaluation) + Related Work + Conclusion is complete; appendix is out of scope.**
+
+---
+
+## Claude #6 — FULL RECONSTRUCTION (`philemon_tsh_reconstructed.tex`) — DONE
+
+Per request, produced the **final tex in the style of `des_loc_reconstructed.tex`**
+(the template's worked example, which fills the DES-LOC skeleton with "Neuron_SP"
+at ~4.9k lines, main body + full appendix). The reference relies on
+`neurips_2026.sty`, which is not redistributed and does not compile here, so this
+file keeps the established self-contained preamble (`article` + embedded
+`filecontents` bib) and compiles standalone.
+
+`philemon_tsh_reconstructed.tex` (1481 lines, **19 pages**, compiles with
+pdflatex+bibtex, no undefined refs) = the depth-expanded body + a complete appendix:
+- Body: §1 Introduction, §2 The Philemon-TSH System (2.1 Separation of Access
+  Timescales incl. hotness score + migration-drift; 2.2 Architecture + Algorithm 1
+  + Composition), §3 Correctness & Complexity Guarantees (Def 1, invariants I1-I4,
+  Thms 1-3, Prop 1 + honest-scope remark, §3.5 validation), §4 Experimental Design
+  (RQ1-6 + setup), §5 Evaluation (per-RQ + Takeaways + Tables 1-2), §6 Related Work,
+  §7 Conclusion.
+- Appendix A Implementation & Configuration (codebase, tier config, build flags
+  sm_86+compute_80, E1-E6, data protocol); B Complementary Results (per-step curves
+  for every metric); C Further Architectural Details (deterministic Strict/Greedy/
+  Balanced variants, PCIe peer-access, snapshot isolation, TierPtr lifetime);
+  D Full Proofs (Lemma 1 span-max dominance; full soundness/completeness induction;
+  cost proof; amortization accounting argument; linearizability proof + redundancy
+  remark; Lemma 2 bounded slab fragmentation); E Density-Adaptive Partitioning &
+  Migration Drift (derives the {2ρ̄,0.5ρ̄} rule, Prop partition-count linearity,
+  Prop drift bound D ≤ ⌈r·τ_sweep⌉); F Bandwidth & Speedup Modeling (derives 43.9×
+  from t_lin/t_idx, the 1.23 ns/edge full-window cost, three-tier bandwidth model,
+  end-to-end query cost decomposition); G Design Rationale (background migration vs
+  rebuild-on-access, 4 reasons + when lazy is OK); H LLM Usage Declaration;
+  I Limitations (read-path lock, no closed-form scan cost, single-node, sliding-
+  window assumption, synthetic-heavy eval).
+
+Header comment documents the Claude #1-#6 provenance, mirroring the reference's
+per-Claude milestone log. The condensed `philemon_tsh.tex` (11 pp, 5-section body)
+is retained alongside, as `des_loc_reconstructed.tex` sits beside the skeleton files.
