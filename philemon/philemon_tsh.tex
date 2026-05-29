@@ -1,0 +1,373 @@
+% =============================================================================
+% Philemon-TSH: Tiered-Residency Temporal Subgraph Retrieval on Heterogeneous
+%               GPU Memory
+%
+% Written by filling the DES-LOC paper skeleton
+%   (dylanyunlon/Desynced-Low-Communication) with the Philemon-TSH system
+%   (dylanyunlon/walpurgis-WTFGG).  Five main body sections, no appendix.
+%
+% Claude #1 (this file): self-contained preamble, title, abstract, Section 1
+%   (Introduction + contributions), and structured stubs for Sections 2-5.
+% Claude #2: Section 2  (The Philemon-TSH System)
+% Claude #3: Section 3  (Correctness & Complexity Guarantees)
+% Claude #4: Section 4  (Experimental Design)
+% Claude #5: Section 5  (Evaluation) + short Related Work & Conclusion
+% =============================================================================
+
+\documentclass[10pt]{article}
+
+% ---- self-contained bibliography (no external .bib needed) -------------------
+\begin{filecontents*}{references.bib}
+@inproceedings{paszke2019pytorch,
+  title={PyTorch: An Imperative Style, High-Performance Deep Learning Library},
+  author={Paszke, Adam and Gross, Sam and Massa, Francisco and others},
+  booktitle={NeurIPS}, year={2019}}
+@article{shoeybi2019megatron,
+  title={Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism},
+  author={Shoeybi, Mohammad and Patwary, Mostofa and Puri, Raul and others},
+  journal={arXiv:1909.08053}, year={2019}}
+@inproceedings{rasley2020deepspeed,
+  title={DeepSpeed: System Optimizations Enable Training Deep Learning Models with Over 100 Billion Parameters},
+  author={Rasley, Jeff and Rajbhandari, Samyam and Ruwase, Olatunji and He, Yuxiong},
+  booktitle={KDD}, year={2020}}
+@inproceedings{abadi2016tensorflow,
+  title={TensorFlow: A System for Large-Scale Machine Learning},
+  author={Abadi, Mart\'in and Barham, Paul and Chen, Jianmin and others},
+  booktitle={OSDI}, year={2016}}
+@inproceedings{hamilton2017graphsage,
+  title={Inductive Representation Learning on Large Graphs},
+  author={Hamilton, William L. and Ying, Rex and Leskovec, Jure},
+  booktitle={NeurIPS}, year={2017}}
+@article{rossi2020tgn,
+  title={Temporal Graph Networks for Deep Learning on Dynamic Graphs},
+  author={Rossi, Emanuele and Chamberlain, Ben and Frasca, Fabrizio and others},
+  journal={arXiv:2006.10637}, year={2020}}
+@inproceedings{erling2015ldbc,
+  title={The LDBC Social Network Benchmark: Interactive Workload},
+  author={Erling, Orri and Averbuch, Alex and Larriba-Pey, Josep and others},
+  booktitle={SIGMOD}, year={2015}}
+@article{pugh1990skiplists,
+  title={Skip Lists: A Probabilistic Alternative to Balanced Trees},
+  author={Pugh, William}, journal={Communications of the ACM},
+  volume={33}, number={6}, pages={668--676}, year={1990}}
+@book{clrs2009,
+  title={Introduction to Algorithms}, edition={3rd},
+  author={Cormen, Thomas H. and Leiserson, Charles E. and Rivest, Ronald L. and Stein, Clifford},
+  publisher={MIT Press}, year={2009}}
+@article{oneil1996lsm,
+  title={The Log-Structured Merge-Tree (LSM-Tree)},
+  author={O'Neil, Patrick and Cheng, Edward and Gawlick, Dieter and O'Neil, Elizabeth},
+  journal={Acta Informatica}, volume={33}, number={4}, pages={351--385}, year={1996}}
+@misc{nccl,
+  title={{NVIDIA} Collective Communications Library ({NCCL})},
+  author={{NVIDIA}}, howpublished={\url{https://github.com/NVIDIA/nccl}}, note={Software}}
+@misc{morphgl,
+  title={{MorphGL}: Collective Mini-batch Scheduling for {GNN} Training},
+  author={{initzhang}}, howpublished={\url{https://github.com/initzhang/MorphGL}}, note={Software}}
+@misc{d2stgnn,
+  title={{D2STGNN}: Decoupled Dynamic Spatial-Temporal Graph Neural Network},
+  author={{GestaltCogTeam}}, howpublished={\url{https://github.com/GestaltCogTeam/D2STGNN}}, note={Software}}
+@misc{rapidstore,
+  title={{RapidStore}: Concurrent Dynamic Graph Storage with Snapshot Isolation},
+  howpublished={Upstream component (see project repository)}, note={Software}}
+@misc{temgraph,
+  title={{TEM-Graph}: Temporal Interval Index for Dynamic Subgraph Queries},
+  howpublished={Upstream component (see project repository)}, note={Software}}
+\end{filecontents*}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+
+% ---- theorem environments (used by Section 3) --------------------------------
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{assumption}{Assumption}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newcommand{\todoclaude}[1]{\medskip\noindent\textcolor{red}{\textbf{[TODO #1]}}\medskip}
+
+\title{\textbf{Philemon-TSH}: Tiered-Residency Temporal Subgraph Retrieval\\
+       on Heterogeneous GPU Memory}
+
+\author{
+  Anonymous Authors\\
+  \\
+  Walpurgis Project --- Workload-Aware GNN Training on Mixed-Generation GPUs
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+% =============================================================================
+\begin{abstract}
+Training and serving temporal graph neural networks requires repeatedly
+extracting time-windowed subgraphs from graphs whose temporal-edge tables far
+exceed the high-bandwidth memory (HBM) of a single accelerator. Existing
+temporal stores assume a flat, homogeneous address space: interval indexes such
+as TEM-Graph accelerate within-window lookups, and concurrent stores such as
+RapidStore provide snapshot isolation, but neither coordinates temporal locality
+with the deep, asymmetric memory hierarchy of a mixed-generation cluster
+(HBM on an H100, GDDR on an A6000, and host DRAM). Pinning the whole graph in HBM
+does not fit; demoting cold data to DRAM without temporal awareness destroys
+query latency; and a per-query scan over every temporal partition costs $O(P)$,
+which grows without bound under streaming ingestion. We propose \textbf{Philemon-TSH},
+a temporal-subgraph engine that assigns \emph{independent residency tiers} to
+temporal partitions by access frequency and temporal density---hot, dense
+intervals waterfall into HBM, cold, sparse intervals settle in DRAM---and that
+prunes partition \emph{selection} to $O(\log P + k)$ with an interval skip list
+augmented by a span-maximum of interval endpoints. Our analysis shows that the
+inter-partition selection step, not the intra-partition scan, dominates query
+cost, and that streaming ingestion requires at least an \emph{incremental}
+(segmented, log-structured-merge) index to avoid an $O(N^2\log N)$ rebuild cliff;
+we further prove that a sequence lock makes hot-path reads wait-free without
+blocking background migration. Across synthetic and LDBC temporal workloads,
+Philemon-TSH achieves a $\mathbf{43.9\times}$ faster intra-partition scan than a
+linear scan and up to $\mathbf{4.1\times}$ faster partition selection than a full
+sweep, at near-zero memory fragmentation under repeated cross-tier migration.
+Correctness is validated by over ten million exhaustive cross-checks against
+brute-force enumeration and by a $2.1$M-query concurrent run that is race- and
+torn-read-free under a thread sanitizer. Unlike single-tier stores, Philemon-TSH
+degrades gracefully as graphs outgrow HBM, providing a scalable, race-free,
+bandwidth-aware substrate for temporal GNN training on heterogeneous hardware.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:introduction}
+% =============================================================================
+
+Temporal graph neural networks operate not on a static adjacency structure but on
+a stream of timestamped edges, and almost every training or inference step begins
+by materializing a \emph{temporal subgraph}: all edges whose timestamps fall in a
+query window $[\ell, h]$, gathered around a batch of seed
+vertices~\citep{rossi2020tgn,hamilton2017graphsage}. On modern accelerators this
+gather is memory-bound rather than compute-bound, and it is bound by a hierarchy
+whose levels differ by more than an order of magnitude in latency: on-package
+high-bandwidth memory (HBM) services a temporal-edge lookup in ${\sim}1$\,ns,
+the GDDR of a previous-generation board in ${\sim}5$\,ns, and host DRAM behind
+PCIe in ${\sim}50$\,ns. Production clusters are rarely homogeneous---a node may
+pair a current-generation H100 (large, fast HBM) with one or more A6000-class
+boards (ample but slower GDDR), all backed by abundant DRAM---so a temporal store
+that targets such hardware must decide \emph{which} time intervals live in
+\emph{which} memory, and must revisit that decision as the workload's hot window
+slides forward in time.
+
+Prior temporal graph systems do not make this decision. Interval-indexing engines
+such as TEM-Graph~\citep{temgraph} build a doubly-linked interval index that
+answers contains/contained queries efficiently, but within a single, flat memory;
+concurrent dynamic-graph stores such as RapidStore~\citep{rapidstore} provide
+snapshot isolation over one address space; and collective mini-batch schedulers
+for GNN training such as MorphGL~\citep{morphgl} and decoupled spatial--temporal
+models such as D2STGNN~\citep{d2stgnn} assume the working set already fits in
+device memory. Meanwhile, the general-purpose caching allocators of deep-learning
+frameworks~\citep{paszke2019pytorch,nccl} pool memory \emph{within} a device but
+are oblivious to temporal access patterns. Reusing these components on a deep
+memory hierarchy poses three problems. \emph{First}, capacity: a billion-edge
+temporal-edge table does not fit in HBM, so something must reside in slower tiers.
+\emph{Second}, placement: spilling cold data to DRAM with no notion of temporal
+locality demotes exactly the intervals a sliding-window workload is about to read,
+inflating tail latency. \emph{Third}, and most subtly, \emph{selection}: even with
+a perfect intra-partition index, answering a query still requires identifying
+which temporal partitions overlap the window, and a linear sweep over all $P$
+partitions costs $O(P)$ per query---fixed-cost when $P$ is small, but unbounded
+under streaming ingestion, where $P$ grows monotonically as new edges arrive.
+Hence we ask:
+
+\begin{center}
+\emph{Can temporal partitions be placed across an asymmetric HBM/GDDR/DRAM
+hierarchy by their access locality, and selected by an incremental, augmented
+index, so that temporal-subgraph retrieval stays sub-millisecond and correct as
+the graph outgrows fast memory and edges keep arriving?}
+\end{center}
+
+As a result of this inquiry, we propose \textbf{Philemon-TSH}, a temporal-subgraph
+engine that composes two orthogonal mechanisms over a common partition abstraction.
+The first is a \emph{tiered residency schedule}: a \texttt{TieredAllocator} that
+waterfalls each partition across HBM\,$\rightarrow$\,GDDR\,$\rightarrow$\,DRAM, a
+\texttt{TemporalBridge} that maps each time interval to a subgraph partition and a
+home tier, and a background \texttt{MigrationScheduler} that promotes hot
+partitions toward HBM and demotes cold ones toward DRAM. Placement is driven by a
+separation of \emph{access timescales} analogous to the separation of optimizer-state
+timescales in desynchronized training: dense, recently touched intervals change
+tier-membership quickly and belong in fast memory, whereas sparse, stale intervals
+are stable and can settle in DRAM. The second mechanism is an \emph{augmented
+selection index}: a Pugh skip list~\citep{pugh1990skiplists} ordered by interval
+start and augmented, on every forward pointer, with the maximum interval endpoint
+over the run that pointer spans---the skip-list analogue of an interval tree's
+subtree-maximum augmentation~\citep[\S14.3]{clrs2009}---so that
+\texttt{overlaps}$(\ell,h)$ prunes entire runs whose every interval ends before
+$\ell$ and returns the $k$ matching partitions in $O(\log P + k)$ rather than
+$O(P)$. To keep this index cheap under streaming, the bridge holds it as a
+\emph{segmented} structure in the log-structured-merge style~\citep{oneil1996lsm}:
+each ingestion flush appends one immutable segment over only the new partitions,
+and a threshold-triggered compaction amortizes the merge, sidestepping the
+$O(N^2\log N)$ cost of rebuilding a monolithic index on every flush. The residency
+schedule and the selection index operate on orthogonal axes---one decides
+\emph{where} a partition lives, the other decides \emph{whether} it is touched---so
+they compose without interference, and a sequence
+lock makes the read path wait-free: queries optimistically read partition metadata
+and retry only when a concurrent migration is detected, never blocking and never
+forcing the migrating writer to wait on readers.
+
+Following the engineering discipline of the upstream project, each component is
+built ``from C, the good example''---a named reference pattern from a
+production system is identified and adapted, rather than designed from
+scratch. The tiered allocator follows NCCL's allocation dispatch~\citep{nccl};
+slab management follows the page-and-bitmask free lists of NCCL and the block
+coalescing of the PyTorch caching allocator~\citep{paszke2019pytorch}; the
+optimizer-state-swap idiom of DeepSpeed~\citep{rasley2020deepspeed} informs
+double-buffered asynchronous migration; and the partition-state grouping echoes
+Megatron-LM's grouped allocators~\citep{shoeybi2019megatron}. The upstream
+interval semantics come from TEM-Graph~\citep{temgraph} and the concurrent
+snapshot protocol from RapidStore~\citep{rapidstore}.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+  \item \textbf{Access-locality tiered residency for temporal partitions.}
+  We introduce a \texttt{TieredAllocator} that waterfalls partitions across an
+  asymmetric HBM/GDDR/DRAM hierarchy and a \texttt{TemporalBridge} that maps
+  intervals to partitions to home tiers, with a background
+  \texttt{MigrationScheduler} that re-tiers partitions by access frequency and
+  temporal density. Placement is governed by a separation of access timescales:
+  dense, hot intervals are promoted toward HBM while sparse, cold intervals
+  settle in DRAM, so the working set of a sliding-window workload stays in fast
+  memory without manual pinning.
+
+  \item \textbf{Partition selection in $O(\log P + k)$ via an augmented,
+  segmented interval index.} We replace the $O(P)$ per-query partition sweep with
+  a skip list ordered by interval start and augmented with a per-pointer
+  span-maximum of interval endpoints; \texttt{overlaps}$(\ell,h)$ prunes runs that
+  end before $\ell$ and returns the $k$ overlapping partitions in
+  $O(\log P + k)$. To stay cheap under streaming, the index is held as a
+  log-structured-merge sequence of immutable segments---one segment per flush at
+  $O(M\log M)$ for $M$ new partitions, with threshold-triggered compaction---which
+  avoids the $O(N^2\log N)$ rebuild cost of a monolithic index.
+
+  \item \textbf{Wait-free reads and fragmentation-free migration under concurrency.}
+  We make the hot read path wait-free with a sequence lock: queries read partition
+  metadata optimistically and retry only on a detected migration, eliminating the
+  writer starvation of a shared-mutex read path. Cross-tier moves route through a
+  per-tier slab allocator with $O(1)$ bitmask slot allocation and threshold-driven
+  compaction, keeping memory fragmentation near zero under repeated
+  promotion/demotion cycles, and through double-buffered asynchronous copies that
+  overlap migration with queries.
+
+  \item \textbf{Validated correctness and measured speedups on heterogeneous hardware.}
+  We achieve a $43.9\times$ faster intra-partition scan than a linear scan
+  (a narrow window drops from $232.6\,\mu$s to $5.3\,\mu$s) and up to $4.1\times$
+  faster partition selection than a full sweep, and we validate correctness by
+  over ten million exhaustive cross-checks against brute-force enumeration,
+  a twenty-thousand-query three-way check of the segmented index against a
+  whole-list index and brute force, and a $2.1$M-query concurrent run that a
+  thread sanitizer confirms is free of data races and torn reads.
+\end{enumerate}
+
+% =============================================================================
+\section{The Philemon-TSH System}
+\label{sec:system}
+% =============================================================================
+% --- Claude #2 fills this section ---
+% Template analogue: DES-LOC Section 2 (DES-LOC Algorithm).
+% Required structure:
+%   \subsection{Separation of Access Timescales}   (analogue of DES-LOC 2.1
+%       "Separation of Optimizer-State Timescales") -- motivate why hot/dense
+%       intervals belong in HBM and cold/sparse in DRAM; the access-frequency
+%       and temporal-density signals the MigrationScheduler uses; "from C, the
+%       good example" lineage: RapidStore snapshot_edges -> TieredAllocator.
+%   \subsection{The Philemon-TSH Architecture}  (analogue of DES-LOC 2.2
+%       "DES-LOC Algorithm") -- TieredAllocator waterfall, TemporalBridge
+%       ingest/partition/query, MigrationScheduler sweep, SeqLock read path,
+%       SlabAllocator. Present the ingest+query pipeline as Algorithm 1
+%       (\begin{algorithm}...\end{algorithm}), mirroring DES-LOC's Algorithm 1.
+% Grounding: src/core/tiered_allocator.hpp, src/bridge/temporal_bridge.hpp,
+%   src/scheduler/migration_scheduler.hpp, src/core/seqlock.hpp,
+%   src/core/slab_allocator.hpp, src/core/interval_index.hpp,
+%   src/core/partition_skiplist.hpp; REVIEW_M005_M006.md, REVIEW_M007_M008.md.
+\todoclaude{Claude \#2: The Philemon-TSH System (\S\ref{sec:system}).}
+
+% =============================================================================
+\section{Correctness and Complexity Guarantees}
+\label{sec:guarantees}
+% =============================================================================
+% --- Claude #3 fills this section ---
+% Template analogue: DES-LOC Section 3 (Convergence Guarantees).
+% Required structure:
+%   - Assumptions/Invariants (analogue of Assumptions 1-3): partitions sorted by
+%     ts_lo on flush; closed intervals; span-max >= every member ts_hi.
+%   - Theorem (selection cost & soundness): augmented skip-list overlaps(lo,hi)
+%     is O(log P + k); the span_max < lo prune is sound (every interval in a
+%     skipped run ends before lo). (analogue of Theorem 1.)
+%   - Amortization analysis (analogue of the psi-factor boundary analysis):
+%     per-flush O(M log M) segment build; compaction at kCompactThreshold = 8
+%     gives amortized build, no O(N^2 log N) cliff.
+%   - SeqLock read-consistency statement (torn-read detection).
+%   - Validation harness (analogue of the Fig. 1 toy problem): 10M exhaustive +
+%     32k random/adversarial + 20k three-way cross-checks; 900/900 runtime
+%     samples by alloc_id; 2.1M-query TSan run, no race.
+% Grounding: src/core/partition_skiplist.hpp, src/bench/skiplist_selftest.cpp,
+%   src/core/seqlock.hpp; REVIEW_M013_M014.md.
+\todoclaude{Claude \#3: Correctness and Complexity Guarantees (\S\ref{sec:guarantees}).}
+
+% =============================================================================
+\section{Experimental Design}
+\label{sec:expdesign}
+% =============================================================================
+% --- Claude #4 fills this section ---
+% Template analogue: DES-LOC Section 4 (Experimental Design) + 4.1 Setup.
+% Required structure:
+%   - Research questions RQ1-RQ6 (e.g. RQ1: does the augmented index predict the
+%     measured selection cost? RQ2: how does tier placement affect latency?
+%     RQ3: scan/selection speedup vs linear? RQ4: scaling to 100M edges?
+%     RQ5: behaviour under streaming ingestion + compaction? RQ6: concurrency /
+%     migration overlap?).
+%   - \subsection{Experimental Setup}: workloads (synthetic 1M-edge temporal
+%     graph + LDBC SNB SF-1/SF-10/SF-100), tier configuration (HBM 512 MB /
+%     GDDR 1024 MB / DRAM 2048 MB in the dev harness), baselines (single-tier
+%     all-HBM, all-DRAM, linear-sweep oracle, TEM-Graph-only, RapidStore-only),
+%     metrics (query latency by window width, QPS, per-tier memory utilization,
+%     migration cost, scan & selection speedup), hardware (H100 + A6000 + DRAM;
+%     sm_86 + compute_80 PTX), and the 2000-points x 3-seeds data protocol.
+% Grounding: Makefile, build_hetero.sh, run_hetero.sh, DEVELOPMENT_PLAN.md,
+%   philemon_*_2000.json headers.
+\todoclaude{Claude \#4: Experimental Design (\S\ref{sec:expdesign}).}
+
+% =============================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+% =============================================================================
+% --- Claude #5 fills this section (+ short Related Work & Conclusion below) ---
+% Template analogue: DES-LOC Section 5 (Evaluation), one subsection per RQ.
+% Use the philemon_*_2000.json curves (2000 pts x 3 seeds): query_latency,
+% qps, memory_util, migration_cost, interval_index, partition_index,
+% async_migration, query_under_mig. Report means +/- std of the final window.
+% Key results to land: intra-partition scan 43.9x (narrow 232.6->5.3 us;
+% medium 108.5 us; wide 608 us; full 1230 us at ~1.23 ns/edge); partition
+% selection at P=8000 narrow 4.1x / medium 1.75x / wide 0.85x, pure selection
+% 3.7 us indexed vs 8.0 us linear; near-zero fragmentation; correctness +
+% TSan results cross-referenced to Section 3.
+% Grounding: REVIEW_M005_M006.md, REVIEW_M013_M014.md, philemon_*_2000.json.
+\todoclaude{Claude \#5: Evaluation (\S\ref{sec:evaluation}).}
+
+% =============================================================================
+% --- Claude #5 also appends, after Evaluation (short, DES-LOC 6-7 length): ---
+%   \section{Related Work}     temporal graph stores (TEM-Graph, RapidStore),
+%       tiered/heterogeneous memory & caching allocators (PyTorch, NCCL,
+%       DeepSpeed swap), interval/skip-list indexing, LSM indexing, GNN systems
+%       (MorphGL, D2STGNN).
+%   \section{Conclusion}       restate the tiered-residency + augmented-index
+%       contribution and the measured speedups; one paragraph.
+% =============================================================================
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
