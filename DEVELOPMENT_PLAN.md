@@ -159,7 +159,7 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
 | **第 1 位 Claude** | **#8–#9** | M017–M020 | ✅ DONE | +3,725 = 12,645 | LDBC SNB loader (ldbc_types+ldbc_loader+ldbc_driver), tier cost model (TierCostModel: HBM=1ns/GDDR=5ns/DRAM=50ns), cross-tier BFS (direction-optimizing+prefetch+convergence log), cross-tier SSSP (delta-stepping+tier penalty), integration bench (ldbc_bench.cpp 5-test harness). Commit: `49bdd92` |
-| **第 2 位 Claude** | **#10** | M021–M022 | ⬜ 待开发 | **Cross-tier PageRank + WCC**: 迭代算法分层梯度积累, 热点顶点驻留 HBM, 冷顶点降级 DRAM, 收敛曲线作为论文数据 |
+| **第 1 位 Claude** | **#10** | M021–M022 | ✅ DONE | +3,363 = 15,879 | Cross-tier PageRank (689行, tier gradient accumulation + hotspot detection + convergence log), cross-tier WCC (644行, UnionFindTiered + component tier tracking), cross-tier TC (363行, degree-adaptive + marker-based), PhilemonDriver (721行, Barrier+thread pin+cross-tier dispatch), StateInspector (445行, PHILE_BREAKPOINT/INSPECT/TIER_HEATMAP), cross_tier_bench (501行, 5-test harness). 鲁迅拿法: 80% upstream preserved, 20% tier-aware modifications. |
 
 ### Phase 4: Advanced Memory Management
 
@@ -198,10 +198,10 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
 
 ---
 
-## Current Codebase (After 第 1 位 Claude, M001–M020 complete)
+## Current Codebase (After 第 1 位 Claude, M001–M022 complete)
 
 ```
-src/ (8,920 lines total across 32 files)
+src/ (15,879 lines total across 45 files)
 ├── core/           — 7 files, 1997 lines  [M001–M010]
 │   ├── tiered_allocator.hpp     566 lines
 │   ├── seqlock.hpp              129 lines
@@ -214,8 +214,9 @@ src/ (8,920 lines total across 32 files)
 │   └── temporal_bridge.hpp
 ├── scheduler/      — 1 file, 102 lines   [M003]
 │   └── migration_scheduler.hpp
-├── debug/          — 1 file, 281 lines   [M011]
-│   └── philemon_debug.hpp       (TraceRing, TierPerfCounter, ScopedTimer)
+├── debug/          — 2 files, 726 lines   [M011,M021-M022]
+│   ├── philemon_debug.hpp       281 lines  (TraceRing, TierPerfCounter, ScopedTimer)
+│   └── state_inspector.hpp      445 lines  (BreakpointGuard, DataDumper, TierHeatmap)
 ├── index/          — 4 files, 1178 lines  [M011,M012]
 │   ├── interval.hpp             171 lines  (from TEM-Graph)
 │   ├── dll_list.hpp             190 lines  (from TEM-Graph)
@@ -227,21 +228,36 @@ src/ (8,920 lines total across 32 files)
 │   ├── edge_stream.hpp          165 lines  (+load_from_temporal_edges)
 │   ├── graph_edge_impl.hpp        3 lines  (compat wrapper)
 │   └── edge_stream_impl.hpp       3 lines  (compat wrapper)
-├── algorithms/     — 5 files, 980 lines   [M014]
-│   ├── tiered_bfs.hpp           388 lines  (from RapidStore BFS)
-│   ├── tiered_pagerank.hpp      165 lines  (from RapidStore PR)
-│   ├── tiered_sssp.hpp          162 lines  (from RapidStore SSSP)
-│   ├── tiered_wcc.hpp           159 lines  (from RapidStore WCC)
-│   └── tiered_tc.hpp            106 lines  (from RapidStore TC)
+├── algorithms/     — 10 files, 3700 lines [M014,M019-M022]
+│   ├── tiered_bfs.hpp           388 lines
+│   ├── tiered_pagerank.hpp      165 lines
+│   ├── tiered_sssp.hpp          162 lines
+│   ├── tiered_wcc.hpp           159 lines
+│   ├── tiered_tc.hpp            106 lines
+│   ├── cross_tier_bfs.hpp       485 lines
+│   ├── cross_tier_sssp.hpp      539 lines
+│   ├── cross_tier_pagerank.hpp  689 lines  ← NEW M021
+│   ├── cross_tier_wcc.hpp       644 lines  ← NEW M022
+│   └── cross_tier_tc.hpp        363 lines  ← NEW M022
 ├── executor/       — 3 files, 491 lines   [M015,M016]
-│   ├── thread_pool_base.hpp     196 lines  (from RapidStore ThreadPool)
-│   ├── spin_lock.hpp             64 lines  (from RapidStore SpinLock)
-│   └── query_executor.hpp       231 lines  (NEW: concurrent query executor)
-├── bench/          — 4 files, 1705 lines  [M004,M016]
+│   ├── thread_pool_base.hpp     196 lines
+│   ├── spin_lock.hpp             64 lines
+│   └── query_executor.hpp       231 lines
+├── cost_model/     — 1 file, 387 lines    [M018]
+│   └── tier_cost_model.hpp
+├── loader/         — 3 files, 1708 lines  [M017,M018]
+│   ├── ldbc_types.hpp           279 lines
+│   ├── ldbc_loader.hpp          803 lines
+│   └── ldbc_driver.hpp          626 lines
+├── driver/         — 1 file, 721 lines    [M021-M022]       ← NEW dir
+│   └── philemon_driver.hpp      721 lines
+├── bench/          — 6 files, 2683 lines  [M004,M016,M021-M022]
 │   ├── philemon_bench.cpp       389 lines
 │   ├── philemon_data_fast.cpp   296 lines
 │   ├── philemon_data_gen.cpp    645 lines
-│   └── integration_bench.cpp    375 lines  (end-to-end M011-M016 test)
+│   ├── integration_bench.cpp    375 lines
+│   ├── ldbc_bench.cpp           477 lines
+│   └── cross_tier_bench.cpp     501 lines  ← NEW M022
 └── cuda/           — 1 file, 1039 lines   [M009,M010]
     └── hetero_bench.cu
 ```
@@ -249,15 +265,12 @@ src/ (8,920 lines total across 32 files)
 ## Claude 开发进度总览
 
 ```
-第 1 位 Claude ✅ 完成: M001–M020 (核心系统 + upstream集成 + 算法 + executor + LDBC loader + cost model + 跨tier BFS/SSSP)
-第 2 位 Claude ⬜ 待开发: M021–M026 (跨 tier PageRank/WCC + Prefetch + Compaction)
-第 3 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink + Streaming + Checkpoint)
-第 4 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存优化 + 代价模型)
-第 5 位 Claude ⬜ 待开发: M049–M054 (集成测试 + LDBC benchmark)
-第 6 位 Claude ⬜ 待开发: M055–M060 (端到端 benchmark + profiling + 文档)
-第 7 位 Claude ⬜ 待开发: M061–M066 (CMake + CI/CD + Python bindings)
-第 8 位 Claude ⬜ 待开发: M067–M072 (可视化 + 论文系统描述/评估)
-第 9 位 Claude ⬜ 待开发: M073–M078 (论文相关工作 + camera-ready + 最终发布)
+第 1 位 Claude ✅ 完成: M001–M022 (核心系统 + upstream集成 + 算法 + LDBC + cost model + 跨tier BFS/SSSP/PageRank/WCC/TC + Driver + StateInspector)
+第 2 位 Claude ⬜ 待开发: M023–M026 (Prefetch engine + Compaction engine: 查询预测+预迁移, LRU驱逐, slab碎片整理, tier再平衡)
+第 3 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink topology + Streaming ingestion + Checkpoint/restore)
+第 4 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存压力驱逐 + 批量迁移 + Cost model优化)
+第 5 位 Claude ⬜ 待开发: M049–M054 (TEM-Graph集成测试 + RapidStore集成测试 + LDBC benchmark全套)
+第 6 位 Claude ⬜ 待开发: M055–M066 (端到端benchmark + Profiling + 文档 + CMake + CI/CD + Python bindings)
 ```
 
 ## Pending Bugs (for Claude #4+)
