@@ -158,47 +158,47 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
 
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
-| **第 2 位 Claude** | **#8–#9** | M017–M020 | ⬜ 待开发 | **LDBC SNB loader** + **Cross-tier BFS/SSSP**: 解析 LDBC 时间图, 校准自适应分区阈值, 跨层 BFS frontier prefetch, 代价模型 HBM=1ns/GDDR=5ns/DRAM=50ns |
-| **第 3 位 Claude** | **#10** | M021–M022 | ⬜ 待开发 | **Cross-tier PageRank + WCC**: 迭代算法分层梯度积累, 热点顶点驻留 HBM, 冷顶点降级 DRAM, 收敛曲线作为论文数据 |
+| **第 1 位 Claude** | **#8–#9** | M017–M020 | ✅ DONE | +3,725 = 12,645 | LDBC SNB loader (ldbc_types+ldbc_loader+ldbc_driver), tier cost model (TierCostModel: HBM=1ns/GDDR=5ns/DRAM=50ns), cross-tier BFS (direction-optimizing+prefetch+convergence log), cross-tier SSSP (delta-stepping+tier penalty), integration bench (ldbc_bench.cpp 5-test harness). Commit: `49bdd92` |
+| **第 2 位 Claude** | **#10** | M021–M022 | ⬜ 待开发 | **Cross-tier PageRank + WCC**: 迭代算法分层梯度积累, 热点顶点驻留 HBM, 冷顶点降级 DRAM, 收敛曲线作为论文数据 |
 
 ### Phase 4: Advanced Memory Management
 
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
-| **第 3 位 Claude** | **#11–#12** | M023–M026 | ⬜ 待开发 | **Prefetch engine** + **Compaction engine**: 查询历史预测 + 预迁移到 HBM, LRU+频率驱逐, 自动 slab 碎片整理, tier 再平衡 |
-| **第 4 位 Claude** | **#13–#14** | M027–M030 | ⬜ 待开发 | **Multi-GPU** + **NVLink topology**: 跨 H100+A6000 分区, 设备感知 TieredAllocator, NCCL topo graph, Ring/Tree 路由 |
+| **第 2 位 Claude** | **#11–#12** | M023–M026 | ⬜ 待开发 | **Prefetch engine** + **Compaction engine**: 查询历史预测 + 预迁移到 HBM, LRU+频率驱逐, 自动 slab 碎片整理, tier 再平衡 |
+| **第 3 位 Claude** | **#13–#14** | M027–M030 | ⬜ 待开发 | **Multi-GPU** + **NVLink topology**: 跨 H100+A6000 分区, 设备感知 TieredAllocator, NCCL topo graph, Ring/Tree 路由 |
 
 ### Phase 5: Streaming + Complex Queries
 
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
-| **第 4 位 Claude** | **#15–#16** | M031–M034 | ⬜ 待开发 | **Streaming ingestion** + **Checkpoint/restore**: 在线边到达增量重分区, 序列化 tier 状态+分区布局 |
-| **第 5 位 Claude** | **#17–#20** | M035–M042 | ⬜ 待开发 | **Mixed read-write** + **Triangle counting** + **k-hop temporal** + **Temporal motif**: SeqLock 并发读写, 跨 tier 三角枚举, 多跳时序邻域, 滑动窗口模式检测 |
+| **第 3 位 Claude** | **#15–#16** | M031–M034 | ⬜ 待开发 | **Streaming ingestion** + **Checkpoint/restore**: 在线边到达增量重分区, 序列化 tier 状态+分区布局 |
+| **第 4 位 Claude** | **#17–#20** | M035–M042 | ⬜ 待开发 | **Mixed read-write** + **Triangle counting** + **k-hop temporal** + **Temporal motif**: SeqLock 并发读写, 跨 tier 三角枚举, 多跳时序邻域, 滑动窗口模式检测 |
 
 ### Phase 6: Optimization + Integration Testing
 
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
-| **第 5 位 Claude** | **#21–#23** | M043–M048 | ⬜ 待开发 | **Memory pressure eviction** + **Batch migration** + **Cost model**: RSS 监控+主动降级, 合并迁移减少 cudaMemcpy, ILP/贪心最优 tier 分配 |
-| **第 6 位 Claude** | **#24–#26** | M049–M054 | ⬜ 待开发 | **TEM-Graph 集成测试** + **RapidStore 集成测试** + **LDBC benchmark**: 端到端正确性验证, 并发快照隔离, vs baseline 对比 |
+| **第 4 位 Claude** | **#21–#23** | M043–M048 | ⬜ 待开发 | **Memory pressure eviction** + **Batch migration** + **Cost model**: RSS 监控+主动降级, 合并迁移减少 cudaMemcpy, ILP/贪心最优 tier 分配 |
+| **第 5 位 Claude** | **#24–#26** | M049–M054 | ⬜ 待开发 | **TEM-Graph 集成测试** + **RapidStore 集成测试** + **LDBC benchmark**: 端到端正确性验证, 并发快照隔离, vs baseline 对比 |
 
 ### Phase 7: Publication Data Generation
 
 | 实际 Claude # | 计划 Claude # | Milestones | Scope |
 |--------------|--------------|-----------|-------|
-| **第 7 位 Claude** | **#27–#29** | M055–M060 | **End-to-end benchmark** + **Profiling harness** + **Documentation**: 2000+ step 收敛曲线, nsys 集成, API 参考 |
-| **第 8 位 Claude** | **#30–#32** | M061–M066 | **CMake build** + **CI/CD** + **Python bindings**: 统一构建, GitHub Actions, pybind11 接口 |
+| **第 6 位 Claude** | **#27–#29** | M055–M060 | **End-to-end benchmark** + **Profiling harness** + **Documentation**: 2000+ step 收敛曲线, nsys 集成, API 参考 |
+| **第 7 位 Claude** | **#30–#32** | M061–M066 | **CMake build** + **CI/CD** + **Python bindings**: 统一构建, GitHub Actions, pybind11 接口 |
 
 ### Phase 8: Paper + Release
 
 | 实际 Claude # | 计划 Claude # | Milestones | Scope |
 |--------------|--------------|-----------|-------|
-| **第 9 位 Claude** | **#33–#35** | M067–M072 | **Visualization dashboard** + **Paper: system+evaluation**: 查询延迟热力图, 架构描述, vs baseline 评估 |
-| **第 10 位 Claude** | **#36–#38** | M073–M078 | **Paper: related work** + **Camera-ready** + **Final release**: 定位, 补充材料, artifact DOI |
+| **第 8 位 Claude** | **#33–#35** | M067–M072 | **Visualization dashboard** + **Paper: system+evaluation**: 查询延迟热力图, 架构描述, vs baseline 评估 |
+| **第 9 位 Claude** | **#36–#38** | M073–M078 | **Paper: related work** + **Camera-ready** + **Final release**: 定位, 补充材料, artifact DOI |
 
 ---
 
-## Current Codebase (After 第 1 位 Claude, M001–M016 complete)
+## Current Codebase (After 第 1 位 Claude, M001–M020 complete)
 
 ```
 src/ (8,920 lines total across 32 files)
@@ -249,16 +249,15 @@ src/ (8,920 lines total across 32 files)
 ## Claude 开发进度总览
 
 ```
-第 1 位 Claude ✅ 完成: M001–M016 (核心系统 + upstream 集成 + 算法 + executor)
-第 2 位 Claude ⬜ 待开发: M017–M020 (LDBC 数据集 + 跨 tier BFS/SSSP)
-第 3 位 Claude ⬜ 待开发: M021–M026 (跨 tier PageRank/WCC + Prefetch + Compaction)
-第 4 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink + Streaming + Checkpoint)
-第 5 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存优化 + 代价模型)
-第 6 位 Claude ⬜ 待开发: M049–M054 (集成测试 + LDBC benchmark)
-第 7 位 Claude ⬜ 待开发: M055–M060 (端到端 benchmark + profiling + 文档)
-第 8 位 Claude ⬜ 待开发: M061–M066 (CMake + CI/CD + Python bindings)
-第 9 位 Claude ⬜ 待开发: M067–M072 (可视化 + 论文系统描述/评估)
-第10位 Claude ⬜ 待开发: M073–M078 (论文相关工作 + camera-ready + 最终发布)
+第 1 位 Claude ✅ 完成: M001–M020 (核心系统 + upstream集成 + 算法 + executor + LDBC loader + cost model + 跨tier BFS/SSSP)
+第 2 位 Claude ⬜ 待开发: M021–M026 (跨 tier PageRank/WCC + Prefetch + Compaction)
+第 3 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink + Streaming + Checkpoint)
+第 4 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存优化 + 代价模型)
+第 5 位 Claude ⬜ 待开发: M049–M054 (集成测试 + LDBC benchmark)
+第 6 位 Claude ⬜ 待开发: M055–M060 (端到端 benchmark + profiling + 文档)
+第 7 位 Claude ⬜ 待开发: M061–M066 (CMake + CI/CD + Python bindings)
+第 8 位 Claude ⬜ 待开发: M067–M072 (可视化 + 论文系统描述/评估)
+第 9 位 Claude ⬜ 待开发: M073–M078 (论文相关工作 + camera-ready + 最终发布)
 ```
 
 ## Pending Bugs (for Claude #4+)
