@@ -137,116 +137,128 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
 
 ## 38-Claude Development Schedule
 
-### Phase 1: Core System (Claude #1–#3) — COMPLETED
+### Phase 1: Core System — COMPLETED
 
-| Claude # | Milestones | Status | Lines | Key Deliverables |
-|----------|-----------|--------|-------|-----------------|
-| **#1** | M001–M004 | ✅ DONE | 1,153 | TieredAllocator (waterfall HBM→GDDR→DRAM), TemporalBridge (ingest/partition/query), MigrationScheduler (background sweep), benchmark (1M edges), REVIEW_M001_M004.md |
-| **#2** | M005–M006 | ✅ DONE | +247 = 1,400 | Lockfree touch() (CCCL fetch_add), shared_mutex (abseil ReaderLock), binary search scan_partition (LevelDB Seek, Thrust lower_bound), 43.9× scan speedup, REVIEW_M005_M006.md |
-| **#3** | M007–M008 | ✅ DONE | +500 = 1,900 | SeqLock (wait-free reads), adaptive partitioning (TEM-Graph density), SlabAllocator (NCCL freeMask, PyTorch Block, TF Arena), data gen (4 JSON files × 2000 pts), REVIEW_M007_M008.md |
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Lines | Key Deliverables |
+|--------------|--------------|-----------|--------|-------|-----------------|
+| — | **#1** | M001–M004 | ✅ DONE | 1,153 | TieredAllocator (waterfall HBM→GDDR→DRAM), TemporalBridge (ingest/partition/query), MigrationScheduler (background sweep), benchmark (1M edges), REVIEW_M001_M004.md |
+| — | **#2** | M005–M006 | ✅ DONE | +247 = 1,400 | Lockfree touch() (CCCL fetch_add), shared_mutex (abseil ReaderLock), binary search scan_partition (LevelDB Seek, Thrust lower_bound), 43.9× scan speedup, REVIEW_M005_M006.md |
+| — | **#3** | M007–M008 | ✅ DONE | +500 = 1,900 | SeqLock (wait-free reads), adaptive partitioning (TEM-Graph density), SlabAllocator (NCCL freeMask, PyTorch Block, TF Arena), data gen (4 JSON files × 2000 pts), REVIEW_M007_M008.md |
+| — | **#4** | M009–M010 | ✅ DONE | +3,078 = 4,978 | CUDA backend, TierPtr, AsyncMigrator, PartitionIndex, TemporalEdge extraction, hetero_bench.cu |
 
-### Phase 2: CUDA + Upstream Integration (Claude #4–#7)
+> 注: Phase 1 的 Claude #1–#4 在单次批量提交 `4efda85` 中完成, M001–M011 核心系统已合并入 main.
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#4** | M009–M010 | **CUDA backend**: Replace posix_memalign with cudaMalloc/cudaMallocHost. cudaMemcpyAsync + double-buffered migration (DeepSpeed AsyncTensorSwapper pattern). RAII TierPtr guard for get_ptr() (Bug 4.5). NVLink P2P copy via cudaMemcpyPeer. Pattern: NCCL ncclMemAlloc → cuMemCreate → cuMemMap. |
-| **#5** | M011–M012 | **TEM-Graph index integration**: Build TEM-Graph interval index within each partition. contains_query/contained_query accelerate temporal subgraph extraction. Replace linear scan_partition with index-based O(output) traversal. Pattern: TEM-Graph build_index → doubly-linked list + successor pointers. |
-| **#6** | M013–M014 | **RapidStore bridge**: Expose tiered partitions as RapidStore snapshots. Wrap TieredAllocator behind RapidStore's wrapper::snapshot_edges API. Enable RapidStore algorithms (BFS, SSSP) on tiered data. Pattern: RapidStore wrapper → template dispatch. |
-| **#7** | M015–M016 | **Concurrent query executor**: Thread pool with per-partition parallelism. Work-stealing across tiers (HBM queries first). Batched query interface for throughput. Pattern: Megatron DistributedDataParallel → bucket-based parallelism. |
+### Phase 2: Upstream Integration — COMPLETED
 
-### Phase 3: Real Datasets + Graph Algorithms (Claude #8–#10)
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Lines | Key Deliverables |
+|--------------|--------------|-----------|--------|-------|-----------------|
+| **第 1 位 Claude** | **#5–#7** | M011–M016 | ✅ DONE | +3,942 = 8,920 | TEM-Graph index (interval+dll_list+tem_graph), RapidStore bridge (TieredSnapshot+wrapper API), 5 graph algorithms (BFS/PR/SSSP/WCC/TC), concurrent QueryExecutor, debug instrumentation, integration benchmark. Commits: `ef173d4`, `5014db6` |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#8** | M017–M018 | **LDBC SNB loader**: Parse LDBC temporal graph (person-knows-person with timestamps). Calibrate adaptive partition thresholds from real data distributions. Benchmark on LDBC SF-1, SF-10, SF-100. |
-| **#9** | M019–M020 | **Cross-tier BFS/SSSP**: Algorithms that span HBM+GDDR+DRAM. Automatic partition prefetch when BFS frontier crosses tier boundary. Cost model: HBM access 1ns, GDDR 5ns, DRAM 50ns. |
-| **#10** | M021–M022 | **Cross-tier PageRank + WCC**: Iterative algorithms with tiered gradient accumulation. Hot vertices stay in HBM, cold vertices demoted to DRAM. Convergence curves as publication data. |
+### Phase 3: Real Datasets + Graph Algorithms
 
-### Phase 4: Advanced Memory Management (Claude #11–#14)
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
+|--------------|--------------|-----------|--------|-------|
+| **第 2 位 Claude** | **#8–#9** | M017–M020 | ⬜ 待开发 | **LDBC SNB loader** + **Cross-tier BFS/SSSP**: 解析 LDBC 时间图, 校准自适应分区阈值, 跨层 BFS frontier prefetch, 代价模型 HBM=1ns/GDDR=5ns/DRAM=50ns |
+| **第 3 位 Claude** | **#10** | M021–M022 | ⬜ 待开发 | **Cross-tier PageRank + WCC**: 迭代算法分层梯度积累, 热点顶点驻留 HBM, 冷顶点降级 DRAM, 收敛曲线作为论文数据 |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#11** | M023–M024 | **Prefetch engine**: Predict next-access partition from query history. Pre-migrate to HBM before query arrives. LRU + frequency-based eviction policy. |
-| **#12** | M025–M026 | **Compaction engine**: Automatic slab defragmentation (Bug 4.8). Tier rebalancing when usage exceeds 80%. compact_slabs() in MigrationScheduler loop. |
-| **#13** | M027–M028 | **Multi-GPU support**: Partition across H100 + A6000 devices. Device-aware TieredAllocator with per-GPU HBM pools. Pattern: Megatron MultiGroupMemPoolAllocator. |
-| **#14** | M029–M030 | **NVLink topology**: NCCL topo graph for optimal partition placement. Ring/tree routing for inter-device migration. Pattern: NCCL topology detection. |
+### Phase 4: Advanced Memory Management
 
-### Phase 5: Streaming + Complex Queries (Claude #15–#20)
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
+|--------------|--------------|-----------|--------|-------|
+| **第 3 位 Claude** | **#11–#12** | M023–M026 | ⬜ 待开发 | **Prefetch engine** + **Compaction engine**: 查询历史预测 + 预迁移到 HBM, LRU+频率驱逐, 自动 slab 碎片整理, tier 再平衡 |
+| **第 4 位 Claude** | **#13–#14** | M027–M030 | ⬜ 待开发 | **Multi-GPU** + **NVLink topology**: 跨 H100+A6000 分区, 设备感知 TieredAllocator, NCCL topo graph, Ring/Tree 路由 |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#15** | M031–M032 | **Streaming ingestion**: Online edge arrival with incremental re-partitioning. Amortized flush: batch edges, sort, merge into existing partitions. |
-| **#16** | M033–M034 | **Checkpoint/restore**: Serialize tier state + partition layout to persistent storage. Resume from checkpoint after restart. |
-| **#17** | M035–M036 | **Mixed read-write workload**: Concurrent insert + temporal query. SeqLock enables non-blocking reads during write bursts. |
-| **#18** | M037–M038 | **Triangle counting**: Per-partition triangle enumeration with cross-tier edge lookup. Aggregate across tiers. |
-| **#19** | M039–M040 | **k-hop temporal neighborhood**: Multi-hop BFS with temporal constraints. Each hop may cross tier boundaries. |
-| **#20** | M041–M042 | **Temporal motif mining**: Detect recurring temporal patterns across partitions. Sliding window over time range. |
+### Phase 5: Streaming + Complex Queries
 
-### Phase 6: Optimization + Integration Testing (Claude #21–#26)
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
+|--------------|--------------|-----------|--------|-------|
+| **第 4 位 Claude** | **#15–#16** | M031–M034 | ⬜ 待开发 | **Streaming ingestion** + **Checkpoint/restore**: 在线边到达增量重分区, 序列化 tier 状态+分区布局 |
+| **第 5 位 Claude** | **#17–#20** | M035–M042 | ⬜ 待开发 | **Mixed read-write** + **Triangle counting** + **k-hop temporal** + **Temporal motif**: SeqLock 并发读写, 跨 tier 三角枚举, 多跳时序邻域, 滑动窗口模式检测 |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#21** | M043–M044 | **Memory pressure eviction**: RSS monitoring + proactive demotion. OOM-triggered release (PyTorch pattern). |
-| **#22** | M045–M046 | **Batch migration**: Coalesce multiple partition moves into one transfer. Reduce cudaMemcpy call overhead. |
-| **#23** | M047–M048 | **Cost model**: bandwidth × latency × query-miss penalty. Optimal tier assignment via ILP or greedy. |
-| **#24** | M049–M050 | **TEM-Graph integration tests**: End-to-end contains_query on tiered data. Correctness validation against baseline. |
-| **#25** | M051–M052 | **RapidStore integration tests**: End-to-end snapshot_edges on tiered partitions. Concurrent snapshot isolation. |
-| **#26** | M053–M054 | **LDBC benchmark suite**: Interactive Short queries on tiered graph. Compare vs TEM-Graph-only and RapidStore-only baselines. |
+### Phase 6: Optimization + Integration Testing
 
-### Phase 7: Publication Data Generation (Claude #27–#32)
+| 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
+|--------------|--------------|-----------|--------|-------|
+| **第 5 位 Claude** | **#21–#23** | M043–M048 | ⬜ 待开发 | **Memory pressure eviction** + **Batch migration** + **Cost model**: RSS 监控+主动降级, 合并迁移减少 cudaMemcpy, ILP/贪心最优 tier 分配 |
+| **第 6 位 Claude** | **#24–#26** | M049–M054 | ⬜ 待开发 | **TEM-Graph 集成测试** + **RapidStore 集成测试** + **LDBC benchmark**: 端到端正确性验证, 并发快照隔离, vs baseline 对比 |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#27** | M055–M056 | **End-to-end benchmark**: Temporal PageRank convergence across tiers. 2000+ step convergence curves. |
-| **#28** | M057–M058 | **Profiling harness**: nsys integration, bandwidth utilization metrics. Per-tier throughput breakdown. |
-| **#29** | M059–M060 | **Documentation**: API reference, architecture diagrams, deployment guide. |
-| **#30** | M061–M062 | **CMake build system**: Unified build with upstream TEM-Graph + RapidStore. CUDA optional. |
-| **#31** | M063–M064 | **CI/CD pipeline**: GitHub Actions. Automated benchmark regression. Performance gates. |
-| **#32** | M065–M066 | **Python bindings**: pybind11 for TemporalBridge + query interface. Jupyter notebook demos. |
+### Phase 7: Publication Data Generation
 
-### Phase 8: Paper + Release (Claude #33–#38)
+| 实际 Claude # | 计划 Claude # | Milestones | Scope |
+|--------------|--------------|-----------|-------|
+| **第 7 位 Claude** | **#27–#29** | M055–M060 | **End-to-end benchmark** + **Profiling harness** + **Documentation**: 2000+ step 收敛曲线, nsys 集成, API 参考 |
+| **第 8 位 Claude** | **#30–#32** | M061–M066 | **CMake build** + **CI/CD** + **Python bindings**: 统一构建, GitHub Actions, pybind11 接口 |
 
-| Claude # | Milestones | Scope |
-|----------|-----------|-------|
-| **#33** | M067–M068 | **Visualization dashboard**: Query latency heatmap by time range × tier. Interactive React component. |
-| **#34** | M069–M070 | **Paper: system description**: Architecture, design decisions, pattern lineage from 20 repos. |
-| **#35** | M071–M072 | **Paper: evaluation**: vs baseline TEM-Graph, vs RapidStore-only. Scalability to 100M edges. |
-| **#36** | M073–M074 | **Paper: related work + conclusion**: Position in temporal graph processing landscape. |
-| **#37** | M075–M076 | **Camera-ready**: Supplementary material, artifact packaging, reproducibility scripts. |
-| **#38** | M077–M078 | **Final integration test**: Release tagging, artifact DOI, README for reproducibility. |
+### Phase 8: Paper + Release
+
+| 实际 Claude # | 计划 Claude # | Milestones | Scope |
+|--------------|--------------|-----------|-------|
+| **第 9 位 Claude** | **#33–#35** | M067–M072 | **Visualization dashboard** + **Paper: system+evaluation**: 查询延迟热力图, 架构描述, vs baseline 评估 |
+| **第 10 位 Claude** | **#36–#38** | M073–M078 | **Paper: related work** + **Camera-ready** + **Final release**: 定位, 补充材料, artifact DOI |
 
 ---
 
-## Current Codebase (After Claude #1 restart, incorporating #1–#3 work)
+## Current Codebase (After 第 1 位 Claude, M001–M016 complete)
 
 ```
-src/
-├── core/
-│   ├── tiered_allocator.hpp     474 lines  [M001,M005,M008]
-│   ├── seqlock.hpp              129 lines  [M007]
-│   └── slab_allocator.hpp       405 lines  [M008]
-├── bridge/
-│   └── temporal_bridge.hpp      480 lines  [M002,M006,M007]
-├── scheduler/
-│   └── migration_scheduler.hpp  102 lines  [M003]
-└── bench/
-    ├── philemon_bench.cpp       310 lines  [M004,M008]
-    ├── philemon_data_fast.cpp   296 lines  [data gen]
-    └── philemon_data_gen.cpp    645 lines  [data gen, full]
-                                ──────
-                          Total: 2,841 lines
+src/ (8,920 lines total across 32 files)
+├── core/           — 7 files, 1997 lines  [M001–M010]
+│   ├── tiered_allocator.hpp     566 lines
+│   ├── seqlock.hpp              129 lines
+│   ├── slab_allocator.hpp       405 lines
+│   ├── tier_ptr.hpp             184 lines
+│   ├── async_migrator.hpp       440 lines
+│   ├── partition_index.hpp      244 lines
+│   └── temporal_edge.hpp         29 lines
+├── bridge/         — 1 file, 510 lines   [M002,M006,M007]
+│   └── temporal_bridge.hpp
+├── scheduler/      — 1 file, 102 lines   [M003]
+│   └── migration_scheduler.hpp
+├── debug/          — 1 file, 281 lines   [M011]
+│   └── philemon_debug.hpp       (TraceRing, TierPerfCounter, ScopedTimer)
+├── index/          — 4 files, 1178 lines  [M011,M012]
+│   ├── interval.hpp             171 lines  (from TEM-Graph)
+│   ├── dll_list.hpp             190 lines  (from TEM-Graph)
+│   ├── tem_graph.hpp            105 lines  (from TEM-Graph)
+│   └── tem_graph_impl.hpp       712 lines  (from TEM-Graph)
+├── wrapper/        — 5 files, 635 lines   [M013]
+│   ├── rapidstore_wrapper.hpp   376 lines  (TieredSnapshot + wrapper:: API)
+│   ├── graph_edge.hpp            88 lines  (+temporal fields)
+│   ├── edge_stream.hpp          165 lines  (+load_from_temporal_edges)
+│   ├── graph_edge_impl.hpp        3 lines  (compat wrapper)
+│   └── edge_stream_impl.hpp       3 lines  (compat wrapper)
+├── algorithms/     — 5 files, 980 lines   [M014]
+│   ├── tiered_bfs.hpp           388 lines  (from RapidStore BFS)
+│   ├── tiered_pagerank.hpp      165 lines  (from RapidStore PR)
+│   ├── tiered_sssp.hpp          162 lines  (from RapidStore SSSP)
+│   ├── tiered_wcc.hpp           159 lines  (from RapidStore WCC)
+│   └── tiered_tc.hpp            106 lines  (from RapidStore TC)
+├── executor/       — 3 files, 491 lines   [M015,M016]
+│   ├── thread_pool_base.hpp     196 lines  (from RapidStore ThreadPool)
+│   ├── spin_lock.hpp             64 lines  (from RapidStore SpinLock)
+│   └── query_executor.hpp       231 lines  (NEW: concurrent query executor)
+├── bench/          — 4 files, 1705 lines  [M004,M016]
+│   ├── philemon_bench.cpp       389 lines
+│   ├── philemon_data_fast.cpp   296 lines
+│   ├── philemon_data_gen.cpp    645 lines
+│   └── integration_bench.cpp    375 lines  (end-to-end M011-M016 test)
+└── cuda/           — 1 file, 1039 lines   [M009,M010]
+    └── hetero_bench.cu
+```
 
-upstream/
-├── temgraph/          TEM-Graph temporal interval index
-└── rapidstore/        RapidStore dynamic graph storage
+## Claude 开发进度总览
 
-infra-refs/ (20 repos, shallow clones)
-
-data output (4 JSON files, 2000 pts/curve × 3 seeds each):
-├── philemon_query_latency_2000.json     481 KB
-├── philemon_qps_2000.json              404 KB
-├── philemon_memory_util_2000.json      135 KB
-└── philemon_migration_cost_2000.json   206 KB
+```
+第 1 位 Claude ✅ 完成: M001–M016 (核心系统 + upstream 集成 + 算法 + executor)
+第 2 位 Claude ⬜ 待开发: M017–M020 (LDBC 数据集 + 跨 tier BFS/SSSP)
+第 3 位 Claude ⬜ 待开发: M021–M026 (跨 tier PageRank/WCC + Prefetch + Compaction)
+第 4 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink + Streaming + Checkpoint)
+第 5 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存优化 + 代价模型)
+第 6 位 Claude ⬜ 待开发: M049–M054 (集成测试 + LDBC benchmark)
+第 7 位 Claude ⬜ 待开发: M055–M060 (端到端 benchmark + profiling + 文档)
+第 8 位 Claude ⬜ 待开发: M061–M066 (CMake + CI/CD + Python bindings)
+第 9 位 Claude ⬜ 待开发: M067–M072 (可视化 + 论文系统描述/评估)
+第10位 Claude ⬜ 待开发: M073–M078 (论文相关工作 + camera-ready + 最终发布)
 ```
 
 ## Pending Bugs (for Claude #4+)
