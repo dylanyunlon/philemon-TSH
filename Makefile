@@ -4,8 +4,10 @@
 #   make cpu              — CPU-only benchmark (dev VM, no GPU needed)
 #   make integration      — Integration bench (TEM-Graph + RapidStore + algorithms)
 #   make cuda             — CUDA heterogeneous benchmark (ags1: A6000×2 + H100)
+#   make ldbc             — LDBC SNB loader + cost model bench (M017-M020)
 #   make all              — cpu + integration + cuda
 #   make test             — Quick integration test (small graph)
+#   make ldbc_test        — Quick LDBC bench with synthetic data
 #   make clean
 
 CXX      := g++
@@ -15,7 +17,8 @@ NVFLAGS  := -std=c++17 -O2 -Xcompiler "-pthread -fopenmp -Wall" -lineinfo
 
 # Include paths — all source directories
 INCLUDES := -I src -I src/core -I src/bridge -I src/index -I src/wrapper \
-            -I src/algorithms -I src/executor -I src/debug
+            -I src/algorithms -I src/executor -I src/debug \
+            -I src/loader -I src/cost_model
 
 # Detect CUDA version for arch flags
 CUDA_VER := $(shell nvcc --version 2>/dev/null | grep release | sed 's/.*release //' | sed 's/,.*//')
@@ -38,15 +41,22 @@ WRAPPER_HEADERS := src/wrapper/rapidstore_wrapper.hpp \
 
 ALGO_HEADERS := src/algorithms/tiered_bfs.hpp src/algorithms/tiered_pagerank.hpp \
                 src/algorithms/tiered_sssp.hpp src/algorithms/tiered_wcc.hpp \
-                src/algorithms/tiered_tc.hpp
+                src/algorithms/tiered_tc.hpp \
+                src/algorithms/cross_tier_bfs.hpp src/algorithms/cross_tier_sssp.hpp
 
 EXEC_HEADERS := src/executor/thread_pool_base.hpp src/executor/spin_lock.hpp \
                 src/executor/query_executor.hpp
 
 DEBUG_HEADERS := src/debug/philemon_debug.hpp
 
+LOADER_HEADERS := src/loader/ldbc_types.hpp src/loader/ldbc_loader.hpp \
+                  src/loader/ldbc_driver.hpp
+
+COST_HEADERS := src/cost_model/tier_cost_model.hpp
+
 ALL_HEADERS := $(CORE_HEADERS) $(INDEX_HEADERS) $(WRAPPER_HEADERS) \
                $(ALGO_HEADERS) $(EXEC_HEADERS) $(DEBUG_HEADERS) \
+               $(LOADER_HEADERS) $(COST_HEADERS) \
                src/bridge/temporal_bridge.hpp src/scheduler/migration_scheduler.hpp
 
 .PHONY: all cpu integration cuda test clean
@@ -76,5 +86,15 @@ hetero_bench: src/cuda/hetero_bench.cu
 test: integration_bench
 	./integration_bench 1000 5000 100 2 1
 
+# LDBC SNB loader + cost model bench (M017-M020)
+ldbc_bench: src/bench/ldbc_bench.cpp $(ALL_HEADERS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $<
+
+ldbc: ldbc_bench
+
+# Quick LDBC bench with synthetic data
+ldbc_test: ldbc_bench
+	./ldbc_bench "" 4 2.0 2
+
 clean:
-	rm -f philemon_bench integration_bench hetero_bench
+	rm -f philemon_bench integration_bench hetero_bench ldbc_bench
