@@ -110,3 +110,51 @@ with only namespace wrapping and debug print additions.
 3. **Edge/stream files**: `graph_edge.hpp` and `edge_stream.hpp` remain unmodified
    copies — may need namespace wrapping
 4. **CUDA integration**: `hetero_bench.cu` may need updated includes
+
+---
+
+## Session 2 Addendum (Claude #6)
+
+### Additional Files Created/Modified
+
+| File | Lines | Action |
+|------|-------|--------|
+| `src/bench/integration_bench.cpp` | 375 | **NEW**: End-to-end integration benchmark (4 phases) |
+| `src/wrapper/graph_edge.hpp` | 88 | **Modified**: +temporal fields, +dump(), +philemon::graph alias |
+| `src/wrapper/edge_stream.hpp` | 165 | **Modified**: +load_from_temporal_edges(), +dump_stream_stats(), removed file I/O dep |
+| `src/wrapper/graph_edge_impl.hpp` | 3 | Replaced with thin include wrapper |
+| `src/wrapper/edge_stream_impl.hpp` | 3 | Replaced with thin include wrapper |
+| `Makefile` | 80 | **Updated**: +integration target, +all header deps, +INCLUDES paths |
+
+### Compilation & Runtime Verified
+
+Both `make cpu` and `make integration` compile cleanly (warnings only).
+
+Integration benchmark runtime results (10K vertices, 50K edges, 1K queries, 4 threads):
+
+| Phase | Component | Result |
+|-------|-----------|--------|
+| 1 | TEM-Graph index build | 49988 unique intervals, avg_degree=2.0 |
+| 1 | Contains query (sample) | 318 total matches across 5 queries |
+| 2 | BFS from vertex 0 | Completed (reachable depends on graph connectivity) |
+| 2 | PageRank (10 iters) | 68ms, converged |
+| 2 | SSSP (delta=1.0) | 9933/10000 reachable, 14435 relaxations |
+| 2 | WCC | 62 components in 5 iterations, 22ms |
+| 3 | Concurrent executor | 172K QPS, 1000 queries in 5.8ms |
+| 4 | EdgeStream | 49983 edges after dedup, sequential scan verified |
+
+### Updated Architecture
+
+```
+src/ (9,217 lines total across 32 files)
+├── core/        — 7 files, 1997 lines
+├── bridge/      — 1 file, 510 lines
+├── scheduler/   — 1 file, 102 lines
+├── debug/       — 1 file, 281 lines
+├── index/       — 4 files, 1178 lines
+├── wrapper/     — 5 files, 635 lines  (graph_edge +62, edge_stream +132)
+├── algorithms/  — 5 files, 980 lines
+├── executor/    — 3 files, 491 lines
+├── bench/       — 4 files, 1705 lines (+375 integration_bench)
+└── cuda/        — 1 file, 1039 lines
+```

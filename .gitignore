@@ -11,3 +11,6 @@ data_demo/
 .DS_Store
 *.o
 *.d
+philemon_bench
+integration_bench
+hetero_bench

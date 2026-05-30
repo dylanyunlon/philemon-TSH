@@ -100,7 +100,7 @@ std::vector<uint64_t> TieredWCC<F,S>::wcc() {
             }, i);
         }
         for (auto& t : threads) t.join();
-        for (auto& tc : thread_changed) if (tc) changed = true;
+        for (auto tc : thread_changed) if (tc) changed = true;
 
         // Pointer jumping: comp[u] = comp[comp[u]]
         for (uint64_t u = 0; u < N; u++) {

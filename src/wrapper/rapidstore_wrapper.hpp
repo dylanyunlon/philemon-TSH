@@ -174,9 +174,9 @@ public:
                           uint8_t tier, uint64_t max_vertex = 0) {
         for (size_t i = 0; i < count; ++i) {
             auto& e = edges[i];
-            uint64_t mx = std::max(e.source, e.dest);
+            uint64_t mx = std::max(e.source, e.destination);
             if (mx >= adj_.size()) adj_.resize(mx + 1);
-            adj_[e.source].push_back({e.dest, e.weight, tier,
+            adj_[e.source].push_back({e.destination, e.weight, tier,
                                        e.ts_start, e.ts_end});
             total_edges_++;
         }
