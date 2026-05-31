@@ -165,7 +165,7 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
 
 | 实际 Claude # | 计划 Claude # | Milestones | Status | Scope |
 |--------------|--------------|-----------|--------|-------|
-| **第 2 位 Claude** | **#11–#12** | M023–M026 | ⬜ 待开发 | **Prefetch engine** + **Compaction engine**: 查询历史预测 + 预迁移到 HBM, LRU+频率驱逐, 自动 slab 碎片整理, tier 再平衡 |
+| **第 2 位 Claude** | **#11–#12** | M023–M026 | ✅ 完成 | **Prefetch engine** + **Compaction engine**: 查询历史预测 + 预迁移到 HBM, LRU+频率驱逐, 自动 slab 碎片整理, tier 再平衡 |
 | **第 3 位 Claude** | **#13–#14** | M027–M030 | ⬜ 待开发 | **Multi-GPU** + **NVLink topology**: 跨 H100+A6000 分区, 设备感知 TieredAllocator, NCCL topo graph, Ring/Tree 路由 |
 
 ### Phase 5: Streaming + Complex Queries
@@ -266,7 +266,7 @@ src/ (15,879 lines total across 45 files)
 
 ```
 第 1 位 Claude ✅ 完成: M001–M022 (核心系统 + upstream集成 + 算法 + LDBC + cost model + 跨tier BFS/SSSP/PageRank/WCC/TC + Driver + StateInspector)
-第 2 位 Claude ⬜ 待开发: M023–M026 (Prefetch engine + Compaction engine: 查询预测+预迁移, LRU驱逐, slab碎片整理, tier再平衡)
+第 2 位 Claude ✅ 完成: M023–M026 (Prefetch engine + Compaction engine: 查询预测+预迁移, LRU驱逐, slab碎片整理, tier再平衡)
 第 3 位 Claude ⬜ 待开发: M027–M034 (Multi-GPU + NVLink topology + Streaming ingestion + Checkpoint/restore)
 第 4 位 Claude ⬜ 待开发: M035–M048 (混合读写 + 复杂查询 + 内存压力驱逐 + 批量迁移 + Cost model优化)
 第 5 位 Claude ⬜ 待开发: M049–M054 (TEM-Graph集成测试 + RapidStore集成测试 + LDBC benchmark全套)

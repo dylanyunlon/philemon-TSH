@@ -88,8 +88,8 @@ struct InspectionPoint {
         ip.message = msg;
         for (int t = 0; t < 3; t++) {
             ip.tier_reads[t]  = tier_perf(t).read_count.load();
-            ip.tier_writes[t] = tier_perf(t).write_count.load();
-            ip.tier_bytes[t]  = tier_perf(t).bytes_transferred.load();
+            ip.tier_writes[t] = tier_perf(t).migrate_out_count.load();
+            ip.tier_bytes[t]  = tier_perf(t).migrate_out_bytes.load();
         }
         return ip;
     }
@@ -290,8 +290,8 @@ public:
         for (int t = 0; t < 3; t++) {
             auto& perf = tier_perf(t);
             uint64_t reads = perf.read_count.load();
-            uint64_t writes = perf.write_count.load();
-            uint64_t bytes = perf.bytes_transferred.load();
+            uint64_t writes = perf.migrate_out_count.load();
+            uint64_t bytes = perf.migrate_out_bytes.load();
             int bar_len = (int)(40.0 * reads / max_reads);
 
             std::printf("    %s [", tier_names[t]);
