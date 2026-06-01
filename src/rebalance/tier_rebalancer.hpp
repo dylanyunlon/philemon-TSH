@@ -1,7 +1,7 @@
 #ifndef PHILEMON_TIER_REBALANCER_HPP
 #define PHILEMON_TIER_REBALANCER_HPP
 /**
- * tier_rebalancer.hpp — Automatic Tier Redistribution Engine
+ * tier_rebalancer.hpp — 自动层级再平衡引擎（热度驱动的数据搬迁）
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):

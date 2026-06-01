@@ -1,5 +1,5 @@
 /**
- * tier_ptr.hpp — RAII pointer guard for tiered memory access
+ * tier_ptr.hpp — RAII 层级指针守卫（borrow 期间持锁，析构释放）
  *
  * Bug 4.5 (Claude #2 review): get_ptr() returns raw pointer under
  * shared_lock, but the lock is released before the caller uses the
@@ -126,6 +126,16 @@ public:
         if (lock_.owns_lock()) lock_.unlock();
         return p;
     }
+
+public:
+    void set_debug(bool on) { debug_tier_ptr_ = on; }
+    void dump(const char* tag = "") const {
+        std::printf("[TIER-PTR] %s ptr=%p tier=%u locked=%s\n",
+                    tag, (void*)ptr_, tier_id_,
+                    ptr_ ? "yes" : "no");
+    }
+    bool debug_tier_ptr_ = false;
+    uint8_t tier_id_ = 0;
 
 private:
     T*     ptr_;

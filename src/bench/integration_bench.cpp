@@ -90,8 +90,8 @@ SyntheticGraph generate_graph(const BenchConfig& cfg) {
         e.source   = src;
         e.destination   = dst;
         e.weight   = w;
-        e.ts_start = t0;
-        e.ts_end   = t1;
+        e.ts_begin = t0;
+        e.ts_finish   = t1;
         g.edges.push_back(e);
         g.intervals.push_back({t0, t1});
         g.max_vertex = std::max(g.max_vertex, std::max(src, dst));
@@ -148,7 +148,7 @@ void bench_algorithms(const SyntheticGraph& g, const BenchConfig& cfg) {
     std::vector<size_t> order(g.edges.size());
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        return g.edges[a].ts_end > g.edges[b].ts_end;  // newest first
+        return g.edges[a].ts_finish > g.edges[b].ts_finish;  // newest first
     });
 
     size_t n = g.edges.size();

@@ -1,6 +1,6 @@
 #pragma once
 /**
- * temporal_bridge.hpp — Bridges TEM-Graph interval index ↔ RapidStore graph storage
+ * temporal_bridge.hpp — 时间索引-图存储桥接层（区间→分区→层级放置）
  *
  * This is the critical integration layer.  TEM-Graph stores temporal intervals
  * (start, end timestamps) with a doubly-linked-list index for contains/contained
@@ -211,14 +211,14 @@ public:
         // Sort by interval start, then end (matches TEM-Graph loading order).
         std::sort(buffer_.begin(), buffer_.end(),
             [](const TemporalEdge& a, const TemporalEdge& b) {
-                if (a.ts_start != b.ts_start) return a.ts_start < b.ts_start;
-                return a.ts_end < b.ts_end;
+                if (a.ts_begin != b.ts_begin) return a.ts_begin < b.ts_begin;
+                return a.ts_finish < b.ts_finish;
             });
 
         // M007: Compute adaptive partition boundaries based on temporal density.
         // Step 1: Determine the time range and average density.
-        int32_t global_lo = buffer_.front().ts_start;
-        int32_t global_hi = buffer_.back().ts_start;
+        int32_t global_lo = buffer_.front().ts_begin;
+        int32_t global_hi = buffer_.back().ts_begin;
         int32_t time_range = global_hi - global_lo + 1;
         double avg_density = static_cast<double>(buffer_.size()) / std::max(time_range, 1);
 
@@ -232,7 +232,7 @@ public:
         while (i < buffer_.size()) {
             // Determine local density in a lookahead window
             size_t window_end = std::min(i + partition_cap_, buffer_.size());
-            int32_t local_time = buffer_[window_end - 1].ts_start - buffer_[i].ts_start + 1;
+            int32_t local_time = buffer_[window_end - 1].ts_begin - buffer_[i].ts_begin + 1;
             double local_density = static_cast<double>(window_end - i) / std::max(local_time, 1);
 
             // Adaptive capacity: dense → smaller, sparse → larger
@@ -258,10 +258,10 @@ public:
             size_t count = end - start;
             if (count == 0) continue;
 
-            int32_t lo = buffer_[start].ts_start;
-            int32_t hi = buffer_[end - 1].ts_end;
+            int32_t lo = buffer_[start].ts_begin;
+            int32_t hi = buffer_[end - 1].ts_finish;
             for (size_t j = start; j < end; ++j) {
-                hi = std::max(hi, buffer_[j].ts_end);
+                hi = std::max(hi, buffer_[j].ts_finish);
             }
 
             MemoryTier init_tier = MemoryTier::DRAM;
@@ -363,7 +363,7 @@ public:
     // Then scan forward, stopping when ts_start > ts_hi (no more matches).
     //
     // For "contains" semantics (edge ⊆ query), we need:
-    //   edge.ts_start >= ts_lo AND edge.ts_end <= ts_hi
+    //   edge.ts_begin >= ts_lo AND edge.ts_finish <= ts_hi
     //
     // The lower_bound on ts_start gives us the starting position.
     // The early-exit when ts_start > ts_hi gives us the stopping position.
@@ -401,12 +401,12 @@ public:
         const TemporalEdge* first = std::lower_bound(
             edges, edges_end, ts_lo,
             [](const TemporalEdge& e, int32_t val) {
-                return e.ts_start < val;
+                return e.ts_begin < val;
             });
 
         for (const TemporalEdge* it = first; it != edges_end; ++it) {
-            if (it->ts_start > ts_hi) break;
-            if (it->ts_end <= ts_hi) {
+            if (it->ts_begin > ts_hi) break;
+            if (it->ts_finish <= ts_hi) {
                 cb(*it);
                 ++matched;
             }

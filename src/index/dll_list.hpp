@@ -1,7 +1,7 @@
 #ifndef PHILEMON_DLL_LIST_HPP
 #define PHILEMON_DLL_LIST_HPP
 /**
- * dll_list.hpp — Doubly-Linked List for interval index
+ * dll_list.hpp — 双链表索引（后继指针加速遍历） — Doubly-Linked List for interval index
  *
  * 骨架来源: upstream/temgraph/dll_list.h (核心数据结构100%保留)
  * 修改 (~20%):

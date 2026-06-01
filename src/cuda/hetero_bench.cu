@@ -1,5 +1,5 @@
 /**
- * hetero_bench.cu — Philemon-TSH Heterogeneous Memory Benchmark
+ * hetero_bench.cu — CUDA 异构内存基准测试（HBM/GDDR/DRAM） — Philemon-TSH Heterogeneous Memory Benchmark
  *
  * Target: ags1 server
  *   GPU0: NVIDIA RTX A6000  (49 GB GDDR6)   PCIe NODE to NUMA1
@@ -255,9 +255,9 @@ generate_edges(size_t n, int32_t ts_min, int32_t ts_max, uint64_t max_vertex) {
         if (edges[i].source == edges[i].destination)
             edges[i].destination = (edges[i].destination + 1) % max_vertex;
         edges[i].weight   = 1.0;
-        edges[i].ts_start = ts_dist(rng);
+        edges[i].ts_begin = ts_dist(rng);
         int32_t dur = std::uniform_int_distribution<int32_t>(1, 100)(rng);
-        edges[i].ts_end   = std::min(edges[i].ts_start + dur, ts_max);
+        edges[i].ts_finish   = std::min(edges[i].ts_begin + dur, ts_max);
     }
     return edges;
 }
@@ -389,8 +389,8 @@ static void partition_and_place(
     // Sort by ts_start
     std::sort(edges.begin(), edges.end(),
         [](const TemporalEdge& a, const TemporalEdge& b) {
-            if (a.ts_start != b.ts_start) return a.ts_start < b.ts_start;
-            return a.ts_end < b.ts_end;
+            if (a.ts_begin != b.ts_begin) return a.ts_begin < b.ts_begin;
+            return a.ts_finish < b.ts_finish;
         });
 
     auto t_sort = std::chrono::high_resolution_clock::now();
@@ -409,10 +409,10 @@ static void partition_and_place(
         size_t count = end - i;
         size_t sz = count * sizeof(TemporalEdge);
 
-        int32_t lo = edges[i].ts_start;
-        int32_t hi = edges[end - 1].ts_end;
+        int32_t lo = edges[i].ts_begin;
+        int32_t hi = edges[end - 1].ts_finish;
         for (size_t j = i; j < end; ++j) {
-            hi = std::max(hi, edges[j].ts_end);
+            hi = std::max(hi, edges[j].ts_finish);
         }
 
         // Tier assignment based on partition index
@@ -582,7 +582,7 @@ static QueryResult cross_tier_query(
         auto first = std::lower_bound(
             edges.begin(), edges.end(), ts_lo,
             [](const TemporalEdge& e, int32_t val) {
-                return e.ts_start < val;
+                return e.ts_begin < val;
             });
         for (auto it = first; it != edges.end(); ++it) {
             if (it->ts_start > ts_hi) break;
@@ -897,8 +897,8 @@ static void experiment_scaling(HeteroAllocator& alloc) {
         auto ts = std::chrono::high_resolution_clock::now();
         std::sort(edges.begin(), edges.end(),
             [](const TemporalEdge& a, const TemporalEdge& b) {
-                if (a.ts_start != b.ts_start) return a.ts_start < b.ts_start;
-                return a.ts_end < b.ts_end;
+                if (a.ts_begin != b.ts_begin) return a.ts_begin < b.ts_begin;
+                return a.ts_finish < b.ts_finish;
             });
         auto te = std::chrono::high_resolution_clock::now();
         double sort_ms = std::chrono::duration<double, std::milli>(te - ts).count();
@@ -935,10 +935,10 @@ static void experiment_scaling(HeteroAllocator& alloc) {
             part.dev_ptr = ptr;
             part.size_bytes = sz;
             part.edge_count = count;
-            part.ts_lo = edges[i].ts_start;
-            part.ts_hi = edges[end-1].ts_end;
+            part.ts_lo = edges[i].ts_begin;
+            part.ts_hi = edges[end-1].ts_finish;
             for (size_t j = i; j < end; ++j)
-                part.ts_hi = std::max(part.ts_hi, edges[j].ts_end);
+                part.ts_hi = std::max(part.ts_hi, edges[j].ts_finish);
             CUDA_CHECK(cudaStreamCreate(&part.stream));
             ps.parts.push_back(std::move(part));
         }

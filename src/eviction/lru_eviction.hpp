@@ -1,7 +1,7 @@
 #ifndef PHILEMON_LRU_EVICTION_HPP
 #define PHILEMON_LRU_EVICTION_HPP
 /**
- * lru_eviction.hpp — LRU + Frequency Hybrid Eviction Policy
+ * lru_eviction.hpp — LRU+频率混合驱逐策略（冷分区降级到慢层）
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):

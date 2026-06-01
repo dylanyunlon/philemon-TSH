@@ -1,7 +1,7 @@
 #ifndef PHILEMON_STATE_INSPECTOR_HPP
 #define PHILEMON_STATE_INSPECTOR_HPP
 /**
- * state_inspector.hpp — Runtime State Inspector for Breakpoint-Style Debugging
+ * state_inspector.hpp — 断点式全量状态检查器（RAII守卫+热度图+收敛追踪）
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):

@@ -1,5 +1,5 @@
 /**
- * philemon_bench.cpp — Philemon-TSH integration benchmark
+ * philemon_bench.cpp — 端到端集成基准测试（带全量断点调试）
  *
  * Wires TieredAllocator + TemporalBridge + MigrationScheduler into an
  * end-to-end pipeline that:
@@ -19,9 +19,10 @@
  */
 
 #include "../core/tiered_allocator.hpp"
-#include "../core/async_migrator.hpp"    // M009: async migration
+#include "../core/async_migrator.hpp"
 #include "../bridge/temporal_bridge.hpp"
 #include "../scheduler/migration_scheduler.hpp"
+#include "../debug/philemon_debug.hpp"
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -68,9 +69,13 @@ generate_edges(size_t n, int32_t ts_min, int32_t ts_max, uint64_t max_vertex) {
 
 
 int main() {
+    const char* dbg_env = std::getenv("PHILEMON_DEBUG");
+    int dbg_level = dbg_env ? std::atoi(dbg_env) : 1;
+    philemon::debug::set_debug_level(dbg_level);
+
     std::cout << "═══════════════════════════════════════════════════════\n";
-    std::cout << "   Philemon-TSH — Temporal Subgraph on Tiered Memory\n";
-    std::cout << "   M005–M006: Lockfree Touch + Binary Search Scan\n";
+    std::cout << "   Philemon-TSH — 异构内存时间子图处理系统\n";
+    std::cout << "   端到端基准测试 (debug_level=" << dbg_level << ")\n";
     std::cout << "═══════════════════════════════════════════════════════\n\n";
 
     // ── 1. Configure tier budgets ─────────────────────────────────────────
@@ -102,7 +107,16 @@ int main() {
     auto t1 = std::chrono::high_resolution_clock::now();
     double gen_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     std::cout << "    Generated in " << std::fixed << std::setprecision(2)
-              << gen_ms << " ms\n\n";
+              << gen_ms << " ms\n";
+
+    if (dbg_level >= 1) {
+        std::printf("    ── 边数据采样（首/尾各5条）──\n");
+        for (size_t i = 0; i < 5 && i < edges.size(); i++)
+            edges[i].dump_edge("    HEAD");
+        for (size_t i = edges.size() > 5 ? edges.size()-5 : 0; i < edges.size(); i++)
+            edges[i].dump_edge("    TAIL");
+    }
+    PHILE_CHECKPOINT("after_edge_generation");
 
     // ── 5. Ingest into bridge ─────────────────────────────────────────────
     std::cout << "[2] Ingesting edges into TemporalBridge...\n";
@@ -377,6 +391,9 @@ int main() {
 
     // ── Summary ───────────────────────────────────────────────────────
     double peak_mb = get_peak_rss_mb();
+    PHILE_SEPARATOR("FINAL SUMMARY");
+    philemon::debug::global_trace().dump_last(15);
+    philemon::debug::print_all_tier_perf();
     std::cout << "\n═══════════════════════════════════════════════════════\n";
     std::cout << "  Peak RSS: " << std::fixed << std::setprecision(1)
               << peak_mb << " MB\n";

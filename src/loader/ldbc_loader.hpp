@@ -1,7 +1,7 @@
 #ifndef PHILEMON_LDBC_LOADER_HPP
 #define PHILEMON_LDBC_LOADER_HPP
 /**
- * ldbc_loader.hpp — LDBC SNB Temporal Graph Loader with Tier Placement
+ * ldbc_loader.hpp — LDBC SNB 数据加载器 — LDBC SNB Temporal Graph Loader with Tier Placement
  *
  * 骨架来源: upstream/rapidstore/dataset_preprocessor/dataset_preprocessor.{hpp,cpp}
  *            (61 + 596 = 657行)

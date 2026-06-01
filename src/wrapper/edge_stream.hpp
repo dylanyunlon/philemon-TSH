@@ -101,7 +101,7 @@ public:
         for (size_t i = 0; i < count; i++) {
             edge_stream_.emplace_back(
                 edges[i].source, edges[i].destination, edges[i].weight,
-                edges[i].ts_start, edges[i].ts_end);
+                edges[i].ts_begin, edges[i].ts_finish);
         }
         index_ = 0;
     }

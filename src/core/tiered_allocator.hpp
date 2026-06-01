@@ -1,6 +1,6 @@
 #pragma once
 /**
- * tiered_allocator.hpp — Philemon-TSH Heterogeneous Memory Tier Allocator
+ * tiered_allocator.hpp — 异构内存三层分配器（HBM/GDDR/DRAM 瀑布策略）
  *
  * Design rationale (from RapidStore's wrapper::set_max_threads / NCCL's ncclMemAlloc pattern):
  *
@@ -58,6 +58,7 @@
  */
 
 #include <cstdint>
+#include <cstdio>
 #include <cstddef>
 #include <cassert>
 #include <cstring>

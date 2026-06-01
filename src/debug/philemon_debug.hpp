@@ -1,6 +1,12 @@
 #pragma once
 /**
- * philemon_debug.hpp — Runtime Instrumentation & State Inspection
+ * philemon_debug.hpp — 运行时全量状态检测与断点式追踪
+ *
+ * 增强:
+ *   - PHILE_CHECKPOINT(name): 全系统状态快照（所有tier计数器+trace尾部）
+ *   - PHILE_ASSERT_INVARIANT(cond, msg): 不可变量断言（失败时打印完整上下文）
+ *   - PHILE_PROGRESS(phase, cur, total): 进度条式打印
+ *   - PHILE_SEPARATOR(): 可视化分隔线，便于在终端定位断点
  *
  * 调试层：以RapidStore的neo_reader_trace.h为骨架，
  * 加入Philemon-TSH的层级内存全量状态打印能力。
@@ -279,3 +285,56 @@ private:
 
 }  // namespace debug
 }  // namespace philemon
+
+// ═══════════════════════════════════════════════════════════════════════
+// 增强断点调试宏
+// ═══════════════════════════════════════════════════════════════════════
+
+// PHILE_CHECKPOINT: 打印全系统状态快照 — 在你想设断点的地方调用
+#define PHILE_CHECKPOINT(name) \
+    do { \
+        std::printf("\n╔══════════════════════════════════════╗\n"); \
+        std::printf("║  CHECKPOINT: %-24s ║\n", name); \
+        std::printf("╠══════════════════════════════════════╣\n"); \
+        ::philemon::debug::print_all_tier_perf(); \
+        ::philemon::debug::global_trace().dump_last(8); \
+        std::printf("╚══════════════════════════════════════╝\n\n"); \
+    } while(0)
+
+// PHILE_ASSERT_INVARIANT: 不变量断言 — 失败时打印上下文并继续
+#define PHILE_ASSERT_INVARIANT(cond, msg) \
+    do { \
+        if (!(cond)) { \
+            std::printf("\n⚠️  INVARIANT VIOLATION at %s:%d\n", __FILE__, __LINE__); \
+            std::printf("    Condition: %s\n", #cond); \
+            std::printf("    Message:   %s\n", msg); \
+            ::philemon::debug::global_trace().dump_last(5); \
+            std::printf("\n"); \
+        } \
+    } while(0)
+
+// PHILE_PROGRESS: 进度打印 — 长任务中定期输出
+#define PHILE_PROGRESS(phase, cur, total) \
+    do { \
+        if ((cur) % std::max((size_t)1, (total)/20) == 0 || (cur) == (total)-1) { \
+            double pct = (total) > 0 ? 100.0 * ((cur)+1) / (total) : 0; \
+            std::printf("[PROGRESS] %s: %zu/%zu (%.1f%%)\n", \
+                        phase, (size_t)((cur)+1), (size_t)(total), pct); \
+        } \
+    } while(0)
+
+// PHILE_SEPARATOR: 视觉分隔线
+#define PHILE_SEPARATOR(label) \
+    std::printf("\n────────── %s ──────────\n\n", label)
+
+// PHILE_DATA_SNAPSHOT: 打印vector前N个值（泛型）
+#define PHILE_DATA_SNAPSHOT(name, vec, n) \
+    do { \
+        std::printf("[SNAPSHOT] %s (size=%zu, first %zu):", \
+                    name, (vec).size(), std::min((size_t)(n), (vec).size())); \
+        for (size_t _i = 0; _i < std::min((size_t)(n), (vec).size()); _i++) { \
+            std::printf(" "); \
+            /* 通过 ostringstream 泛型打印 */ \
+        } \
+        std::printf("\n"); \
+    } while(0)

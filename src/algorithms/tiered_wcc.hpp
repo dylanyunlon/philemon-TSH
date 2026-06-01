@@ -131,7 +131,8 @@ std::vector<uint64_t> TieredWCC<F,S>::wcc() {
 
     PHILE_DBG(1, "WCC: %zu components in %lu iterations",
               unique.size(), (unsigned long)iteration);
-    return result;
+    std::printf("[TIERED_WCC] completed\n");
+        return result;
 }
 
 template <class F, class S>

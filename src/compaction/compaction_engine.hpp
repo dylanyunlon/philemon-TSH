@@ -1,7 +1,7 @@
 #ifndef PHILEMON_COMPACTION_ENGINE_HPP
 #define PHILEMON_COMPACTION_ENGINE_HPP
 /**
- * compaction_engine.hpp — Slab Defragmentation & Compaction Engine
+ * compaction_engine.hpp — Slab 碎片整理与压缩引擎
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):

@@ -1,7 +1,7 @@
 #ifndef PHILEMON_LDBC_DRIVER_HPP
 #define PHILEMON_LDBC_DRIVER_HPP
 /**
- * ldbc_driver.hpp — Tier-Aware LDBC Workload Driver
+ * ldbc_driver.hpp — LDBC 基准测试驱动器 — Tier-Aware LDBC Workload Driver
  *
  * 骨架来源: upstream/rapidstore/wrapper/driver.h (1577行)
  * 修改 (~20%):

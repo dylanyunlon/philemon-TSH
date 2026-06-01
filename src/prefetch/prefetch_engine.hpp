@@ -1,7 +1,7 @@
 #ifndef PHILEMON_PREFETCH_ENGINE_HPP
 #define PHILEMON_PREFETCH_ENGINE_HPP
 /**
- * prefetch_engine.hpp — Query-History-Driven Prefetch Engine
+ * prefetch_engine.hpp — 查询历史驱动的预取引擎（冷数据提前拉热）
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):
@@ -1091,6 +1091,9 @@ private:
 // 修改: 集成QueryHistory + Predictor + Scheduler为一体
 // ═══════════════════════════════════════════════════════════════════════
 class PrefetchEngine {
+    uint64_t prefetch_hit_total_ = 0;
+    uint64_t prefetch_hits_ = 0;
+
 private:
     QueryHistoryRing  history_;
     PrefetchTracer    tracer_;

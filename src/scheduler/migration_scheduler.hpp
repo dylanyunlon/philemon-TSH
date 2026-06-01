@@ -1,6 +1,6 @@
 #pragma once
 /**
- * migration_scheduler.hpp — Background thread for cross-tier data migration
+ * migration_scheduler.hpp — 后台迁移调度器（周期评估热度→批量迁移）
  *
  * Follows NCCL's ncclTopoGraph ring/tree scheduling pattern:
  * periodically evaluate partition hotness, issue migrations between

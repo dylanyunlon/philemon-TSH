@@ -1,7 +1,7 @@
 #ifndef PHILEMON_TEM_GRAPH_HPP
 #define PHILEMON_TEM_GRAPH_HPP
 /**
- * tem_graph.hpp — TEM-Graph temporal interval index (header)
+ * tem_graph.hpp — TEM-Graph 时间区间索引（双链表+后继指针结构）
  *
  * 骨架来源: upstream/temgraph/tem_graph.h
  * 修改 (~20%):
@@ -28,6 +28,8 @@ struct QueryResult {
     int          matched_count;
     int64_t      visited_intervals;
     double       elapsed_us;       // query time in microseconds
+
+
     uint8_t      query_type;       // CONTAINS_QUERY or OTHER_QUERY
 
     void dump(const char* label = "Query") const {

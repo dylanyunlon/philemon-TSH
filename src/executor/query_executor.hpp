@@ -1,7 +1,7 @@
 #ifndef PHILEMON_QUERY_EXECUTOR_HPP
 #define PHILEMON_QUERY_EXECUTOR_HPP
 /**
- * query_executor.hpp — Concurrent temporal query executor
+ * query_executor.hpp — 并发时间查询执行器 — Concurrent temporal query executor
  *
  * 新文件，基于 thread_pool_base.hpp + TEM-Graph index + TieredSnapshot 组合。
  * 骨架借鉴:

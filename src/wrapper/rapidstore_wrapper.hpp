@@ -1,6 +1,6 @@
 #pragma once
 /**
- * rapidstore_wrapper.hpp — Tiered Partition ↔ RapidStore Snapshot Bridge
+ * rapidstore_wrapper.hpp — RapidStore 快照兼容层 — Tiered Partition ↔ RapidStore Snapshot Bridge
  *
  * 骨架来源: upstream/rapidstore/wrapper/wrapper.h (249行)
  * 修改 (~20%):
@@ -177,7 +177,7 @@ public:
             uint64_t mx = std::max(e.source, e.destination);
             if (mx >= adj_.size()) adj_.resize(mx + 1);
             adj_[e.source].push_back({e.destination, e.weight, tier,
-                                       e.ts_start, e.ts_end});
+                                       e.ts_begin, e.ts_finish});
             total_edges_++;
         }
         PHILE_DBG(2, "TieredSnapshot: added %zu edges from tier %u, "

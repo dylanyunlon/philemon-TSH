@@ -1,5 +1,5 @@
 /**
- * partition_index.hpp — Per-partition temporal interval index
+ * partition_index.hpp — 单分区时间区间索引（双排序加速查询）
  *
  * Integrates TEM-Graph's interval query strategy into Philemon-TSH's
  * per-partition data. Instead of the full doubly-linked list + successor
@@ -84,6 +84,8 @@ public:
      *   });
      */
     void build(const TemporalEdge* edges, size_t count) {
+        std::printf("[PARTITION-IDX] building index: %zu edges\n",
+                    count);
         edges_ = edges;
         count_ = count;
 
@@ -95,28 +97,28 @@ public:
         std::iota(end_sorted_.begin(), end_sorted_.end(), 0u);
         std::sort(end_sorted_.begin(), end_sorted_.end(),
             [edges](uint32_t a, uint32_t b) {
-                if (edges[a].ts_end == edges[b].ts_end)
-                    return edges[a].ts_start < edges[b].ts_start;
-                return edges[a].ts_end < edges[b].ts_end;
+                if (edges[a].ts_finish == edges[b].ts_finish)
+                    return edges[a].ts_begin < edges[b].ts_begin;
+                return edges[a].ts_finish < edges[b].ts_finish;
             });
 
         // Build running max of ts_end from each start position.
-        // max_end_from_[i] = max(edges[j].ts_end for j in [i..count-1])
+        // max_end_from_[i] = max(edges[j].ts_finish for j in [i..count-1])
         // Used for early termination: if max_end_from_[i] < ts_lo,
         // no edges from position i onward can match.
         max_end_from_.resize(count);
-        max_end_from_[count - 1] = edges[count - 1].ts_end;
+        max_end_from_[count - 1] = edges[count - 1].ts_finish;
         for (size_t i = count - 1; i > 0; --i) {
-            max_end_from_[i - 1] = std::max(max_end_from_[i], edges[i - 1].ts_end);
+            max_end_from_[i - 1] = std::max(max_end_from_[i], edges[i - 1].ts_finish);
         }
 
         // Build running min of ts_start for end-sorted index.
-        // min_start_[i] = min(edges[end_sorted_[j]].ts_start for j in [0..i])
+        // min_start_[i] = min(edges[end_sorted_[j]].ts_begin for j in [0..i])
         min_start_.resize(count);
-        min_start_[0] = edges[end_sorted_[0]].ts_start;
+        min_start_[0] = edges[end_sorted_[0]].ts_begin;
         for (size_t i = 1; i < count; ++i) {
             min_start_[i] = std::min(min_start_[i - 1],
-                                     edges[end_sorted_[i]].ts_start);
+                                     edges[end_sorted_[i]].ts_begin);
         }
 
         built_ = true;
@@ -136,6 +138,7 @@ public:
      */
     template <typename Callback>
     uint64_t contains_query(int32_t lo, int32_t hi, Callback&& cb) const {
+        // contains_query入口
         if (!built_ || count_ == 0) return 0;
 
         // Binary search: first edge with ts_start >= lo.
@@ -143,13 +146,13 @@ public:
         const TemporalEdge* first = std::lower_bound(
             edges_, edges_ + count_, lo,
             [](const TemporalEdge& e, int32_t val) {
-                return e.ts_start < val;
+                return e.ts_begin < val;
             });
 
         uint64_t matched = 0;
         for (const TemporalEdge* it = first; it != edges_ + count_; ++it) {
-            if (it->ts_start > hi) break;  // early termination
-            if (it->ts_end <= hi) {
+            if (it->ts_begin > hi) break;  // early termination
+            if (it->ts_finish <= hi) {
                 cb(*it);
                 ++matched;
             }
@@ -176,13 +179,13 @@ public:
         size_t pos = std::lower_bound(
             end_sorted_.begin(), end_sorted_.end(), hi,
             [this](uint32_t idx, int32_t val) {
-                return edges_[idx].ts_end < val;
+                return edges_[idx].ts_finish < val;
             }) - end_sorted_.begin();
 
         uint64_t matched = 0;
         for (size_t i = pos; i < count_; ++i) {
             uint32_t idx = end_sorted_[i];
-            if (edges_[idx].ts_start <= lo) {
+            if (edges_[idx].ts_begin <= lo) {
                 cb(edges_[idx]);
                 ++matched;
             }
@@ -207,8 +210,8 @@ public:
         // Then check ts_end >= lo.
         uint64_t matched = 0;
         for (size_t i = 0; i < count_; ++i) {
-            if (edges_[i].ts_start > hi) break;
-            if (edges_[i].ts_end >= lo) {
+            if (edges_[i].ts_begin > hi) break;
+            if (edges_[i].ts_finish >= lo) {
                 cb(edges_[i]);
                 ++matched;
             }

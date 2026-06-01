@@ -1,7 +1,7 @@
 #ifndef PHILEMON_THREAD_POOL_BASE_HPP
 #define PHILEMON_THREAD_POOL_BASE_HPP
 /**
- * thread_pool_base.hpp — Thread pool with tier-priority scheduling
+ * thread_pool_base.hpp — 轻量线程池（任务队列+工作线程） — Thread pool with tier-priority scheduling
  *
  * 骨架来源: upstream/rapidstore/NeoGraph/utils/thread_pool.h (98行)
  * 修改 (~20%):

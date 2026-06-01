@@ -1,6 +1,6 @@
 #pragma once
 /**
- * slab_allocator.hpp — Per-tier slab allocator for Philemon-TSH
+ * slab_allocator.hpp — 分层 slab 内存分配器（按 size-class 桶化）
  *
  * Design rationale:
  *
@@ -292,6 +292,13 @@ struct SlabPool {
 // with size-class bins, split/merge logic, and free-block pools.
 
 class SlabAllocator {
+    // ── 调试控制 ──
+    bool slab_trace_ = false;
+    const char* tier_label_ = "?";
+public:
+    void enable_trace(bool on = true) { slab_trace_ = on; }
+    void set_tier_label(const char* lbl) { tier_label_ = lbl; }
+
 public:
     SlabAllocator() {
         for (size_t c = 0; c < SLAB_NUM_CLASSES; ++c) {
@@ -361,6 +368,15 @@ public:
     }
 
     // Statistics
+    // ── 断点调试: 打印 slab 统计摘要 ──
+    void dump_pools(const char* breakpoint_tag = "") const {
+        std::printf("──── SLAB POOL DUMP [%s] tier=%s ────\n",
+                    breakpoint_tag, tier_label_);
+        std::printf("  total_slab_bytes=%zu used_slab_bytes=%zu\n",
+                    total_slab_bytes(), total_used_bytes());
+        std::printf("──── END SLAB DUMP ────\n");
+    }
+
     void print_stats() const {
         std::cout << "[SlabAllocator] Size classes:\n";
         for (size_t c = 0; c < SLAB_NUM_CLASSES; ++c) {

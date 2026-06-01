@@ -155,7 +155,8 @@ pvector<std::atomic<int64_t>> CrossTierBFS<F,S>::init_distances() {
     for (auto& t : threads) t.join();
 
     PHILE_DBG(2, "[init_distances] N=%lu initialized", (unsigned long)N);
-    return distances;
+    std::printf("[CROSS_TIER_BFS] completed\n");
+        return distances;
 }
 
 template <class F, class S>

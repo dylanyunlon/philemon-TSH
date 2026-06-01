@@ -1,7 +1,7 @@
 #ifndef PHILEMON_SPIN_LOCK_HPP
 #define PHILEMON_SPIN_LOCK_HPP
 /**
- * spin_lock.hpp — Lightweight spinlock for hot-path synchronization
+ * spin_lock.hpp — 自旋锁（CAS + 指数退避） — Lightweight spinlock for hot-path synchronization
  *
  * 骨架来源: upstream/rapidstore/NeoGraph/utils/spin_lock.h (23行)
  * 修改 (~10%):

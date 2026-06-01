@@ -73,6 +73,10 @@ public:
                     (unsigned long)destination, weight,
                     ts_start, ts_end);
     }
+    void dump_graph_edge(const char* tag = "") const {
+        std::printf("[GRAPH-EDGE] %s src=%lu dst=%lu w=%.4f\n",
+                    tag, (unsigned long)source, (unsigned long)destination, weight);
+    }
 };
 
 }  // namespace graph

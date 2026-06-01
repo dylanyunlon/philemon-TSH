@@ -194,7 +194,8 @@ pvector<std::atomic<int64_t>> TieredBFS<F,S>::init_distances() {
         }, i);
     }
     for (auto& t : threads) t.join();
-    return distances;
+    std::printf("[TIERED_BFS] completed\n");
+        return distances;
 }
 
 template <class F, class S>

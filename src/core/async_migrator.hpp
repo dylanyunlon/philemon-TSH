@@ -1,5 +1,5 @@
 /**
- * async_migrator.hpp — Asynchronous double-buffered migration engine
+ * async_migrator.hpp — 异步双缓冲迁移引擎（提交-轮询-完成 流水线）
  *
  * Bug 4.4 (Claude #2 review): migrate() uses synchronous memcpy,
  * blocking all queries during data transfer. For large partitions

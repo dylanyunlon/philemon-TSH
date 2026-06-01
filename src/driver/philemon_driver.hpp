@@ -1,7 +1,7 @@
 #ifndef PHILEMON_DRIVER_HPP
 #define PHILEMON_DRIVER_HPP
 /**
- * philemon_driver.hpp — Main Benchmark Driver
+ * philemon_driver.hpp — Philemon 统一驱动器（端到端调度+状态聚合） — Main Benchmark Driver
  *
  * ====================================================================
  * 骨架来源 (upstream, 保留 ~80%):

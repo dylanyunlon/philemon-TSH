@@ -1,7 +1,7 @@
 #ifndef PHILEMON_TEM_GRAPH_IMPL_HPP
 #define PHILEMON_TEM_GRAPH_IMPL_HPP
 /**
- * tem_graph_impl.hpp — TEM-Graph interval index implementation
+ * tem_graph_impl.hpp — TEM-Graph 索引构建与查询实现 — TEM-Graph interval index implementation
  *
  * 骨架来源: upstream/temgraph/tem_graph.cpp (428行, 核心算法100%保留)
  * 修改 (~20%):
@@ -390,6 +390,7 @@ inline void TemGraph::build_index_contained_overlaps(
 // ─── contains_query (from upstream, algorithm preserved) ────────────
 
 inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
+        std::printf("[TEM-IDX] contains_query: [%d, %d]\n", l, r);
     visited_intervals_ = 0;
     RecordId i = 0;
     RecordId last_tell_loc, next_loc;

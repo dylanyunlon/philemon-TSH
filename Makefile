@@ -1,4 +1,4 @@
-# Makefile — Philemon-TSH: Temporal Subgraph on Heterogeneous Memory
+# Makefile — Philemon-TSH: 异构内存时间子图处理
 #
 # Targets:
 #   make cpu              — CPU-only benchmark (dev VM, no GPU needed)

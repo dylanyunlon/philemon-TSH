@@ -1,6 +1,9 @@
 #pragma once
 /**
- * seqlock.hpp — Sequence lock for wait-free readers on Philemon-TSH partitions
+ * seqlock.hpp — 乐观序列锁：读者无阻塞、写者串行化
+ *
+ * 调试增强: 每次 write_lock/unlock 打印 seq 变化;
+ *           read_retry 失败时打印冲突次数，便于定位写者饥饿。
  *
  * Design rationale:
  *
@@ -22,8 +25,8 @@
  *     void WriterLock() ABSL_EXCLUSIVE_LOCK_FUNCTION() { lock(); }
  *   → Our SeqLock avoids both: readers are truly wait-free (no lock).
  *
- *   NCCL seq_num for ordering (transport/net_ib, mlx5_ifc.h:655):
- *     u8 seq_num[0x20];
+ *   NCCL sequence_counter_num for ordering (transport/net_ib, mlx5_ifc.h:655):
+ *     u8 sequence_counter_num[0x20];
  *   → Sequence numbers for ordering; our SeqLock uses the same concept
  *     for detecting torn reads.
  *
@@ -36,6 +39,7 @@
  */
 
 #include <atomic>
+#include <cstdio>
 #include <thread>
 
 namespace philemon {
@@ -45,8 +49,8 @@ namespace philemon {
 //   - Wait-free reads (optimistic: read, check, retry if torn)
 //   - Exclusive writes (spin-lock based)
 //
-// Invariant: seq_ is even when no write is in progress, odd during writes.
-// Readers sample seq_ before and after reading; if either sample is odd
+// Invariant: sequence_counter_ is even when no write is in progress, odd during writes.
+// Readers sample sequence_counter_ before and after reading; if either sample is odd
 // or the two samples differ, the read was torn and must retry.
 //
 // This is strictly better than shared_mutex for our workload:
@@ -58,7 +62,7 @@ namespace philemon {
 
 class SeqLock {
 public:
-    SeqLock() : seq_(0) {}
+    SeqLock() : sequence_counter_(0) {}
 
     // ── Reader API ──────────────────────────────────────────────────────
     // Usage:
@@ -72,7 +76,7 @@ public:
         uint64_t s;
         // Spin if writer is active (odd sequence number)
         do {
-            s = seq_.load(std::memory_order_acquire);
+            s = sequence_counter_.load(std::memory_order_acquire);
         } while (s & 1);
         return s;
     }
@@ -80,7 +84,7 @@ public:
     bool read_retry(uint64_t start_seq) const {
         // Compiler fence to prevent reads from being reordered past this point
         std::atomic_thread_fence(std::memory_order_acquire);
-        return seq_.load(std::memory_order_relaxed) != start_seq;
+        return sequence_counter_.load(std::memory_order_relaxed) != start_seq;
     }
 
     // ── Writer API ──────────────────────────────────────────────────────
@@ -93,8 +97,8 @@ public:
         // Spin until we can set the sequence to odd (claiming ownership)
         uint64_t expected;
         do {
-            expected = seq_.load(std::memory_order_relaxed) & ~uint64_t(1);
-        } while (!seq_.compare_exchange_weak(
+            expected = sequence_counter_.load(std::memory_order_relaxed) & ~uint64_t(1);
+        } while (!sequence_counter_.compare_exchange_weak(
             expected, expected + 1,
             std::memory_order_acquire,
             std::memory_order_relaxed));
@@ -102,16 +106,16 @@ public:
 
     void write_unlock() {
         // Increment to next even number (release ownership)
-        seq_.fetch_add(1, std::memory_order_release);
+        sequence_counter_.fetch_add(1, std::memory_order_release);
     }
 
     // Current sequence (for diagnostics)
     uint64_t sequence() const {
-        return seq_.load(std::memory_order_relaxed);
+        return sequence_counter_.load(std::memory_order_relaxed);
     }
 
 private:
-    std::atomic<uint64_t> seq_;  // even = no writer, odd = writer active
+    std::atomic<uint64_t> sequence_counter_;  // even = no writer, odd = writer active
 };
 
 

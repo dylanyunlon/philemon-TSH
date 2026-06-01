@@ -1,7 +1,7 @@
 #ifndef PHILEMON_TIER_COST_MODEL_HPP
 #define PHILEMON_TIER_COST_MODEL_HPP
 /**
- * tier_cost_model.hpp — Heterogeneous Memory Cost Model
+ * tier_cost_model.hpp — 层级代价模型（带宽/延迟/能耗估算） — Heterogeneous Memory Cost Model
  *
  * 骨架来源:
  *   - upstream/rapidstore/wrapper/wrapper.h snapshot_edges 回调模式 (249行)
