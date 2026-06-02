@@ -340,7 +340,9 @@ public:
     // Free memory. Checks slab pools first, then large allocs.
     void deallocate(void* ptr) {
         if (!ptr) return;
-        // Try slab pools
+        // Try slab pools — scan each pool's pages for containment.
+        // Note: if the caller knows the allocation size, prefer
+        // deallocate_sized() below which skips directly to the right pool.
         for (auto& pool : pools_) {
             if (pool.deallocate(ptr)) return;
         }
@@ -355,6 +357,18 @@ public:
         // Unknown pointer — caller error
         std::cerr << "[SlabAllocator] WARNING: deallocate unknown ptr "
                   << ptr << "\n";
+    }
+
+    // Sized deallocation: skip directly to the correct size-class pool.
+    // Avoids scanning all pools when the caller knows the alloc size.
+    void deallocate_sized(void* ptr, size_t size) {
+        if (!ptr) return;
+        size_t cls = slab_size_class(size);
+        if (cls < SLAB_NUM_CLASSES) {
+            if (pools_[cls].deallocate(ptr)) return;
+        }
+        // Fall back: try large allocs or full scan
+        deallocate(ptr);
     }
 
     // Compact all pools — release empty pages to OS.

@@ -40,6 +40,27 @@ struct TemporalEdge {
 
     // 时间跨度
     int32_t span() const { return ts_finish - ts_begin; }
+
+    // Interval containment: does [ts_begin, ts_finish] lie within [lo, hi]?
+    // This is TEM-Graph's "contains query" predicate at the edge level.
+    bool contained_in(int32_t lo, int32_t hi) const {
+        return ts_begin >= lo && ts_finish <= hi;
+    }
+
+    // Interval overlap: does [ts_begin, ts_finish] overlap [lo, hi]?
+    bool overlaps(int32_t lo, int32_t hi) const {
+        return ts_begin <= hi && ts_finish >= lo;
+    }
+
+    // Lightweight hash for deduplication or hash-based lookup.
+    // Combines vertex ids and timestamps via Knuth's multiplicative hash.
+    uint64_t hash() const {
+        uint64_t h = source * 2654435761ULL;
+        h ^= destination * 40503ULL;
+        h ^= static_cast<uint64_t>(ts_begin) << 17;
+        h ^= static_cast<uint64_t>(ts_finish) << 31;
+        return h;
+    }
 };
 
 }  // namespace philemon

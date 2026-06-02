@@ -74,9 +74,14 @@ public:
 
     uint64_t read_begin() const {
         uint64_t s;
-        // Spin if writer is active (odd sequence number)
+        unsigned spin_count = 0;
         do {
             s = sequence_counter_.load(std::memory_order_acquire);
+            if (s & 1) {
+                // Writer active — back off to avoid burning CPU.
+                // First 4 spins are pure; then yield.
+                if (++spin_count > 4) std::this_thread::yield();
+            }
         } while (s & 1);
         return s;
     }

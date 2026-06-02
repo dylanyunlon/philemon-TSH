@@ -126,9 +126,9 @@ struct OutNeighbor {
 
 // ─── Utility functions (from upstream, minor modifications) ─────────
 inline int random_int(int low, int high) {
-    // Renamed from random() to avoid name collision
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    // thread_local engine: avoids re-seeding random_device on every call
+    // (upstream creates a new mt19937 each invocation — ~500ns overhead)
+    static thread_local std::mt19937 gen{std::random_device{}()};
     std::uniform_int_distribution<> dist(low, high);
     return dist(gen);
 }

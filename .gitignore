@@ -16,3 +16,7 @@ integration_bench
 hetero_bench
 m011_m016.patch
 phase4_bench
+build/
+ldbc_bench
+philemon_bench
+integration_bench

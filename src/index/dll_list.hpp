@@ -69,6 +69,9 @@ public:
     }
 
     void insert(RecordId x) {
+        if (x >= list_location.size()) {
+            list_location.resize(x + 1, (RecordId)-1);
+        }
         list_location[x] = a.size();
         l.push_back(0);
         r.push_back(r[0]);
@@ -107,6 +110,11 @@ public:
     }
 
     void erase(RecordId x) {
+        if (x >= list_location.size()) {
+            std::fprintf(stderr, "[LIST] erase: x=%u out of bounds (size=%zu)\n",
+                         x, list_location.size());
+            return;
+        }
         RecordId _x = x;
         x = list_location[x];
         r[l[x]] = r[x];

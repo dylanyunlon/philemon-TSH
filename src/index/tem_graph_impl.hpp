@@ -390,16 +390,15 @@ inline void TemGraph::build_index_contained_overlaps(
 // ─── contains_query (from upstream, algorithm preserved) ────────────
 
 inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
-        std::printf("[TEM-IDX] contains_query: [%d, %d]\n", l, r);
+    PHILE_DBG(2, "contains_query entry: [%d, %d]", l, r);
     visited_intervals_ = 0;
     RecordId i = 0;
     RecordId last_tell_loc, next_loc;
+    int result_count = 0;  // direct count instead of vector<RecordId*>
 
-    std::vector<RecordId*> res;
-    res.clear();
     RecordId lef = 0, rig = next[i].size() - 1, mid = lef;
 
-    // Binary search for first valid result
+    // Binary search on next[0] for first node whose interval starts >= l
     while (lef < rig) {
         visited_intervals_++;
         mid = (lef + rig) / 2;
@@ -410,20 +409,20 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
     }
     mid = lef;
     i = next[i][mid].x;
+    // Check if the first candidate [l', r'] satisfies l' >= l and r' <= r
     if (T_unique_[my_list.a[i]].r > r || T_unique_[my_list.a[i]].l < l)
-        return res.size();
+        return 0;
 
+    // Count all duplicates of this unique interval in T_id_
     RecordId all_n = T_id_.size(), next_x = all_n;
     if (my_list.a[i] != T_unique_.size() - 1)
         next_x = T_unique_[my_list.a[i] + 1].id;
-    else
-        next_x = all_n;
     for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
-        res.push_back(&T_id_[k]);
+        result_count++;
         visited_intervals_++;
     }
 
-    // Find next valid result via binary search
+    // Binary search for successor entry point — find next[i][mid].l > l
     lef = 0; rig = next[i].size() - 1; mid = lef;
     while (lef < rig) {
         visited_intervals_++;
@@ -437,7 +436,8 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
     last_tell_loc = next[i][mid].successor;
     i = next[i][mid].x;
 
-    // Successor pointer traversal
+    // Walk the successor chain: each step follows the pre-computed
+    // successor pointer to skip irrelevant intervals in O(1)
     do {
         if (T_unique_[my_list.a[i]].r > r || T_unique_[my_list.a[i]].l < l)
             break;
@@ -446,9 +446,10 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
         if (my_list.a[i] != T_unique_.size() - 1)
             next_x = T_unique_[my_list.a[i] + 1].id;
         for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
-            res.push_back(&T_id_[k]);
+            result_count++;
             visited_intervals_++;
         }
+        // Scan backward in next[i] to find the tightest successor
         if (last_tell_loc == 0) visited_intervals_++;
         while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l >= l) {
             visited_intervals_++;
@@ -459,9 +460,9 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
         last_tell_loc = next_loc;
     } while (i != 0);
 
-    PHILE_DBG(3, "contains_query[%d,%d]: matched=%zu visited=%ld",
-              l, r, res.size(), (long)visited_intervals_);
-    return res.size();
+    PHILE_DBG(2, "contains_query[%d,%d]: matched=%d visited=%ld",
+              l, r, result_count, (long)visited_intervals_);
+    return result_count;
 }
 
 
@@ -470,9 +471,8 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
 inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
     visited_intervals_ = 0;
     RecordId i = 0, last_tell_loc, next_loc;
-    std::vector<RecordId*> res;
+    int result_count = 0;
     RecordId all_n = T_id_.size(), next_x = all_n;
-    res.clear();
 
     RecordId lef = 0, rig = next[i].size() - 1, mid = lef;
     while (lef < rig) {
@@ -486,14 +486,14 @@ inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
     mid = lef;
     i = next[i][mid].x;
     if (T_unique_[my_list.a[i]].r < r || T_unique_[my_list.a[i]].l > l)
-        return res.size();
+        return 0;
 
     if (my_list.a[i] != T_unique_.size() - 1)
         next_x = T_unique_[my_list.a[i] + 1].id;
     else
         next_x = all_n;
     for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
-        res.push_back(&T_id_[k]);
+        result_count++;
         visited_intervals_++;
     }
 
@@ -519,7 +519,7 @@ inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
         else
             next_x = all_n;
         for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
-            res.push_back(&T_id_[k]);
+            result_count++;
             visited_intervals_++;
         }
         if (last_tell_loc == 0) visited_intervals_++;
@@ -532,9 +532,9 @@ inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
         last_tell_loc = next_loc;
     } while (i != 0);
 
-    PHILE_DBG(3, "contained_query[%d,%d]: matched=%zu visited=%ld",
-              l, r, res.size(), (long)visited_intervals_);
-    return res.size();
+    PHILE_DBG(2, "contained_query[%d,%d]: matched=%d visited=%ld",
+              l, r, result_count, (long)visited_intervals_);
+    return result_count;
 }
 
 

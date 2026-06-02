@@ -206,11 +206,19 @@ public:
     uint64_t overlap_query(int32_t lo, int32_t hi, Callback&& cb) const {
         if (!built_ || count_ == 0) return 0;
 
-        // Find first edge with ts_start <= hi (all before this).
-        // Then check ts_end >= lo.
+        // Overlap condition: edge.ts_begin <= hi AND edge.ts_finish >= lo.
+        // Since edges are sorted by ts_begin, we can binary-search for the
+        // upper bound (first edge with ts_begin > hi) and only scan [0, ub).
+        // Within that range, ts_finish >= lo is checked per-edge.
+        const TemporalEdge* ub = std::upper_bound(
+            edges_, edges_ + count_, hi,
+            [](int32_t val, const TemporalEdge& e) {
+                return val < e.ts_begin;
+            });
+        size_t scan_end = ub - edges_;
+
         uint64_t matched = 0;
-        for (size_t i = 0; i < count_; ++i) {
-            if (edges_[i].ts_begin > hi) break;
+        for (size_t i = 0; i < scan_end; ++i) {
             if (edges_[i].ts_finish >= lo) {
                 cb(edges_[i]);
                 ++matched;

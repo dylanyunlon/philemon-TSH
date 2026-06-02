@@ -264,11 +264,17 @@ public:
                 hi = std::max(hi, buffer_[j].ts_finish);
             }
 
-            MemoryTier init_tier = MemoryTier::DRAM;
-            if (created == 0) {
-                init_tier = MemoryTier::HBM;
-            } else if (created <= 2) {
-                init_tier = MemoryTier::GDDR;
+            // Tier placement by density: dense partitions → HBM (fast),
+            // medium → GDDR, sparse → DRAM. This respects the heterogeneous
+            // memory hierarchy instead of using a fixed ordinal mapping.
+            double part_density = static_cast<double>(count) / std::max(hi - lo, 1);
+            MemoryTier init_tier;
+            if (part_density > avg_density * 1.5) {
+                init_tier = MemoryTier::HBM;   // hot, dense → fastest tier
+            } else if (part_density > avg_density * 0.5) {
+                init_tier = MemoryTier::GDDR;  // moderate → middle tier
+            } else {
+                init_tier = MemoryTier::DRAM;   // sparse, cold → slowest tier
             }
 
             size_t alloc_size = count * sizeof(TemporalEdge);

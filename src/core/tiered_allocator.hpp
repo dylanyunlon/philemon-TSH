@@ -333,13 +333,17 @@ public:
             if (it == registry_.end()) return;
             meta_ptr = &(it->second);
         }
-        // Lock released — atomics updated lockfree
-        meta_ptr->access_count.fetch_add(1, std::memory_order_relaxed);
-        auto now = std::chrono::steady_clock::now().time_since_epoch();
-        meta_ptr->last_access_ns.store(
-            static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(now).count()),
-            std::memory_order_relaxed);
+        // Lock released — atomics updated lockfree.
+        // Amortize chrono::now() cost: only update timestamp every 64 touches.
+        // The access_count is always accurate; last_access_ns is approximate.
+        uint64_t prev = meta_ptr->access_count.fetch_add(1, std::memory_order_relaxed);
+        if ((prev & 63) == 0) {
+            auto now = std::chrono::steady_clock::now().time_since_epoch();
+            meta_ptr->last_access_ns.store(
+                static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now).count()),
+                std::memory_order_relaxed);
+        }
     }
 
     // Migrate an allocation to a different tier.
