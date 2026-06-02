@@ -412,6 +412,9 @@ public:
 #define PHILE_BREAKPOINT(name) \
     philemon::debug::BreakpointGuard _bp_guard_##__LINE__(name)
 
+// Alias for named breakpoints (used by livegraph_tiered / query_driver)
+#define PHILE_BREAKPOINT_NAMED(name) PHILE_BREAKPOINT(name)
+
 // Inspection point — formatted message + tier snapshot
 #define PHILE_INSPECT(phase, fmt, ...) do { \
     if (philemon::debug::get_debug_level() >= 1) { \
