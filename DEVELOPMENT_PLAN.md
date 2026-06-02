@@ -9,8 +9,8 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 
 | Claude # | Milestones | Status | Summary |
 |----------|-----------|--------|---------|
-| 第1位Claude | M001–M033 | ✅ 完成 | upstream全覆盖算法移植(31272行→52文件20031行) + 20%差异化 + 断点调试增强 |
-| 第2位Claude | M034–M040 | 🔲 待开始 | 编译系统 + 单元测试框架 + 各模块UT覆盖 |
+| 第1位Claude | M001–M033 | ✅ 完成 | upstream全覆盖算法移植(31272行→62文件24881行) + 20%差异化 + 断点调试增强 + LiveGraph tiered适配 + temporal query驱动 + entry适配 |
+| 第2位Claude | M034–M040 | 🔲 待开始 | CMake编译系统 + Google Test框架 + 各模块单元测试覆盖 |
 | 第3位Claude | M041–M047 | 🔲 待开始 | 多GPU拓扑感知调度 + CUDA流水线迁移 + HBM bandwidth profiler |
 | 第4位Claude | M048–M054 | 🔲 待开始 | 自适应预取策略 + 查询代价估算器 + 动态tier rebalance |
 | 第5位Claude | M055–M061 | 🔲 待开始 | 端到端benchmark矩阵(LDBC/LiveJournal/Twitter) + CI集成 + 性能回归检测 |
@@ -21,7 +21,7 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 ## Detailed Milestone Plan
 
 ### 第1位Claude: M001–M033 ✅ (已完成)
-**upstream全量算法移植 + 系统骨架**
+**upstream全量算法移植 + 系统骨架 + gap closure**
 
 已完成的模块覆盖:
 
@@ -32,8 +32,8 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | M017–M020 | algorithms (BFS, SSSP, PR, WCC, TC) + LDBC loader + cost model | src/algorithms/*.hpp (10文件), src/loader/*.hpp, src/cost_model/*.hpp |
 | M021–M026 | driver + debug + eviction + compaction + rebalance + prefetch | src/driver/*.hpp, src/debug/*.hpp, src/eviction/*.hpp, src/compaction/*.hpp, etc. |
 | M027–M029 | types + utils + readers + config_parser + preprocessor | src/types/*.hpp, src/utils/*.hpp, src/readers/*.hpp, src/preprocessor/*.hpp |
-| M030–M031 | 6个wrapper apps (3808行) → unified TieredBackendAdapter | src/wrapper/apps/backend_adapters.hpp |
-| M032 | main.cpp entry point → philemon_main.hpp | src/entry/philemon_main.hpp |
+| M030–M031 | 6个wrapper apps (3808行) → unified TieredBackendAdapter + **LiveGraph tiered adapter** | src/wrapper/apps/backend_adapters.hpp, **src/wrapper/apps/livegraph_tiered.hpp** (924行) |
+| M032 | main.cpp + **driver_main.h** + **main_tem_graph.cpp** → entry points | src/entry/philemon_main.hpp, **src/entry/temporal_query_driver.hpp** (591行), **src/entry/driver_entry.hpp** (224行) |
 | M033 | NeoGraph library (18920行) → tiered_index + internals | src/index/neograph_tiered_index.hpp, src/index/neograph_internals.hpp |
 
 关键算法改动 (20%差异化):
@@ -46,19 +46,22 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 - ART: COW path copy → in-place + 节点类型自动升级
 - Config: boost::program_options → 手动key=value INI解析
 - 6个Backend Adapter(NeoGraph/CSR/LiveGraph/Aspen/Sortledton/Teseo) → 统一TieredAdjacencyStore
+- **LiveGraph: tbb::concurrent_hash_map → unordered_map+shared_mutex; lg::Transaction → TierRouter; batch_loader → bucket-by-tier flush**
+- **Temporal Query: GetTime() → QueryPhaseTimer(p50/p95/p99); warmup phase; per-query tier-hit counters**
+- **Driver Entry: Intel VTune __itt_pause删除; hardcoded config → CLI args; --dump-config/--dry-run**
 
 ### 第2位Claude: M034–M040 (待开始)
 **编译系统 + 单元测试框架**
 
 | Milestone | 内容 |
 |-----------|------|
-| M034 | CMakeLists.txt构建系统: 编译全部52个hpp为可执行测试 |
+| M034 | CMakeLists.txt构建系统: 编译全部62个hpp为可执行测试 |
 | M035 | Google Test集成 + test/目录骨架 |
 | M036 | core模块UT: slab_allocator, tiered_allocator, seqlock, tier_ptr |
 | M037 | index模块UT: tem_graph, neograph_tiered_index, neograph_internals |
 | M038 | algorithms模块UT: BFS/SSSP/PR/WCC/TC正确性验证 |
-| M039 | wrapper模块UT: backend_adapters, readers, config_parser |
-| M040 | 集成测试: 从config加载→建图→运行算法→验证结果的全流程 |
+| M039 | wrapper模块UT: backend_adapters, **livegraph_tiered**, readers, config_parser |
+| M040 | 集成测试: config加载→建图→运行算法→验证结果的全流程 (含**temporal_query_driver**和**driver_entry**) |
 
 ### 第3位Claude: M041–M047 (待开始)
 **GPU拓扑感知 + CUDA迁移**
@@ -119,7 +122,16 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 指标 | 数值 |
 |------|------|
 | upstream总行数 | 31,272 |
-| src/文件数 | 52 |
-| src/总行数 | 20,031 |
-| 覆盖率 | 100% |
+| upstream文件数 | 121 |
+| src/文件数 | 62 |
+| src/总行数 | 24,881 |
+| 覆盖率 | 100% (121/121 upstream files) |
 | 算法差异化 | ~20% per file |
+
+## Changelog
+
+| 日期 | Claude # | 变更 |
+|------|----------|------|
+| 初始 | 第1位 (Session 1-3) | M001–M029: core/index/bridge/wrapper/algorithms/debug/driver/entry 共52文件20031行 |
+| 初始 | 第1位 (Session 4) | M030–M031: NeoGraph internals 2文件 |
+| 2026-06-02 | 第1位 (Session 5) | M030–M033 gap closure: livegraph_tiered.hpp(924行) + temporal_query_driver.hpp(591行) + driver_entry.hpp(224行) + PHILE_BREAKPOINT_NAMED宏 → 62文件24881行, 121/121 upstream全覆盖 |
