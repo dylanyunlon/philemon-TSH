@@ -11,10 +11,10 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 |----------|-----------|--------|---------|
 | 第1位Claude | M001–M033 | ✅ 完成 | upstream全覆盖算法移植(31272行→62文件24881行) + 20%差异化 + 断点调试增强 + LiveGraph tiered适配 + temporal query驱动 + entry适配 |
 | 第2位Claude | M034–M040 | ✅ 完成 | CMake编译系统 + GoogleTest框架 + 94个单元测试全绿 (ctest 94/94 passed) |
-| 第3位Claude | M041–M047 | 🔲 待开始 | 多GPU拓扑感知调度 + CUDA流水线迁移 + HBM bandwidth profiler |
-| 第4位Claude | M048–M054 | 🔲 待开始 | 自适应预取策略 + 查询代价估算器 + 动态tier rebalance |
-| 第5位Claude | M055–M061 | 🔲 待开始 | 端到端benchmark矩阵(LDBC/LiveJournal/Twitter) + CI集成 + 性能回归检测 |
-| 第6位Claude | M062–M068 | 🔲 待开始 | 论文数据生成流水线 + 图表自动化 + 论文写作 + 投稿准备 |
+| 第3位Claude | M041–M043 | ✅ 完成 | upstream 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写 + wrapper_ops结构改造 + 辅助模块移植(15文件2799行) |
+| 第4位Claude | M044–M050 | 🔲 待开始 | CUDA内存管理 + GPU拓扑探测 + 并行BFS/PR kernel + 异步迁移流水线 |
+| 第5位Claude | M051–M057 | 🔲 待开始 | 自适应预取 + 代价估算器 + 热度追踪 + 动态rebalance + 在线学习 |
+| 第6位Claude | M058–M068 | 🔲 待开始 | Benchmark矩阵 + CI + 性能回归 + 论文数据/图表/写作/投稿 |
 
 ---
 
@@ -63,31 +63,35 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | M039 | wrapper模块UT: backend_adapters, **livegraph_tiered**, readers, config_parser |
 | M040 | 集成测试: config加载→建图→运行算法→验证结果的全流程 (含**temporal_query_driver**和**driver_entry**) |
 
-### 第3位Claude: M041–M047 (待开始)
+### 第3位Claude: M041–M043 ✅ (已完成)
+**upstream核心算法重写 — 真正的算法逻辑差异化**
+
+| Milestone | 内容 |
+|-----------|------|
+| M041 | BFS/SSSP算法重写: density-based TD↔BU切换, BU early-exit, adaptive delta, eager pruning, double-checked relaxation |
+| M042 | PR/WCC/TC算法重写: 单趟融合PR, CAS-based union-find WCC, adaptive threshold TC + binary search |
+| M043 | wrapper_ops结构改造 + 辅助模块移植: chunked batch retry, degree reserve, 去weightedEdge耦合; timer/log/config/preprocessor/neo_adapter/driver/entry/bench |
+
+算法改动详情 (每个文件4处核心算法修改):
+
+**BFS**: frontier_density切换 / BU early-exit / acquire-release CAS / alignas(64)距离数组
+**SSSP**: adaptive delta自调节 / dist快照防过时传播 / 区外pre-check减mutex竞争 / 单趟结果收集
+**PR**: 两趟线程→一趟融合 / L1收敛提前退出 / contrib数组复用 / atomic dangling_sum
+**WCC**: CAS原子hook / path halving替代full compression / find_root再hook / atomic change flag
+**TC**: median-degree自适应阈值 / binary_search替代线性marker / 合并TC+TC_opt / 低度数端probe
+
+### 第4位Claude: M044–M050 (待开始)
 **GPU拓扑感知 + CUDA迁移**
 
 | Milestone | 内容 |
 |-----------|------|
-| M041 | CUDA内存管理: cudaMalloc/cudaMemcpy封装为TierPtr<HBM> |
-| M042 | GPU拓扑探测: nvidia-smi拓扑解析 + NVLink/PCIe带宽建模 |
-| M043 | CUDA kernel: 并行BFS (warp-level edge scan) |
-| M044 | CUDA kernel: 并行PageRank (shared-memory reduction) |
-| M045 | 异步数据迁移流水线: CUDA streams + host-to-device overlap |
-| M046 | Multi-GPU分区: 按vertex range分配到不同GPU的HBM |
-| M047 | GPU性能profiler: kernel时间 + HBM带宽 + PCIe传输量 |
-
-### 第4位Claude: M048–M054 (待开始)
-**自适应策略 + 代价估算**
-
-| Milestone | 内容 |
-|-----------|------|
-| M048 | 查询代价估算器: 基于degree分布预测BFS/SSSP层数和边扫描量 |
-| M049 | 自适应预取: 根据历史访问模式动态调整prefetch depth |
-| M050 | 热度追踪器: LFU/LRU混合策略,按时间窗口衰减 |
-| M051 | 动态tier rebalance: 定期(每N次insert后)重新分配HBM/GDDR/DRAM |
-| M052 | 在线代价学习: 用运行时统计修正代价模型参数 |
-| M053 | 内存压力检测: /proc/meminfo + HBM利用率 → 触发eviction |
-| M054 | 自适应batch size: 根据insert throughput动态调整batch大小 |
+| M044 | CUDA内存管理: cudaMalloc/cudaMemcpy封装为TierPtr<HBM> |
+| M045 | GPU拓扑探测: nvidia-smi拓扑解析 + NVLink/PCIe带宽建模 |
+| M046 | CUDA kernel: 并行BFS (warp-level edge scan) |
+| M047 | CUDA kernel: 并行PageRank (shared-memory reduction) |
+| M048 | 异步数据迁移流水线: CUDA streams + host-to-device overlap |
+| M049 | Multi-GPU分区: 按vertex range分配到不同GPU的HBM |
+| M050 | GPU性能profiler: kernel时间 + HBM带宽 + PCIe传输量 |
 
 ### 第5位Claude: M055–M061 (待开始)
 **端到端Benchmark + CI**
@@ -136,3 +140,4 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 初始 | 第1位 (Session 4) | M030–M031: NeoGraph internals 2文件 |
 | 2026-06-02 | 第1位 (Session 5) | M030–M033 gap closure: livegraph_tiered.hpp(924行) + temporal_query_driver.hpp(591行) + driver_entry.hpp(224行) + PHILE_BREAKPOINT_NAMED宏 → 62文件24881行, 121/121 upstream全覆盖 |
 | 2026-06-03 | 第2位 | M034–M040: CMakeLists.txt + GoogleTest v1.14.0 + test/{test_core,test_index,test_algorithms,test_wrapper,test_integration}.cpp → 94/94 tests passed. 源码修复: temporal_query_driver.hpp PHILE_LG_TRACE_FMT宏前移 |
+| 2026-06-03 | 第3位 | M041–M043: 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写(每个4处核心修改) + wrapper_ops结构改造 + 辅助模块移植 → 15文件2799行新增 |
