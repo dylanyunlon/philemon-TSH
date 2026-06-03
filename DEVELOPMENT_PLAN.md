@@ -16,12 +16,34 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 第5位Claude | M045–M051 | ✅ 完成 | CUDA内存管理(瀑布分配+slab池化) + GPU拓扑(Dijkstra路由+NUMA) + 并行BFS(warp-level+ballot) + PR(shared-mem reduce+L1收敛) + 异步迁移(双stream+优先级+限流) + Multi-GPU分区(加权放置+ghost vertex+rebalance) + GPU profiler(分层计时+滑动窗口+瓶颈检测) → 7文件3554行 |
 | 第6位Claude | M052–M058 | ✅ 完成 | 自适应预取(stride+frequency双模式+EWMA+Count-Min) + 代价估算(Roofline+AMAT三层) + 热度追踪(分桶CLOCK+指数衰减+16-shard) + 动态rebalance(梯度下降+共现亲和+bandwidth×urgency) + 在线学习(Thompson Sampling+UCB1) + pipeline编排(Kahn拓扑排序+自适应worker) + 回归测试(shadow-run+Welch t-test) → 7文件4224行 |
 | 第7位Claude | M059–M064 | ✅ 完成 | 6个独立wrapper adapter全量移植(upstream 3808行→6文件3860行): CSR(分段CSR+galloping+3路归并) + Sortledton(skip-sentinel+zigzag join+epoch事务) + Teseo(adaptive intersect+RCU shadow-swap+optimistic retry) + Aspen(B+树叶链直扫+fractional cascading+CompactBloom+16桶batch) + LiveGraph(OpenAddrHashSet交集+batch-gather+WAL merge+degree cache) + Neo(delta-compressed+4-way unrolled merge+partition-sort-batch) + 编译验证6/6 PASS |
-| 第8位Claude | M065–M070 | 🔲 待开始 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准(RapidStore/Teseo/Sortledton原版) + CI pipeline + 性能回归检测 + 端到端集成测试 + 可视化dashboard |
+| 第8位Claude | M065–M070 | ✅ 已完成 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准(RapidStore/Teseo/Sortledton原版) + CI pipeline + 性能回归检测 + 端到端集成测试 + cuckoo index gap close + dataset loader |
 | 第9位Claude | M071–M076 | 🔲 待开始 | 论文实验数据收集 + 图表生成(matplotlib/pgfplots) + 统计显著性分析 + 数据一致性校验 + 实验可复现脚本 + supplementary material |
 | 第10位Claude | M077–M082 | 🔲 待开始 | 论文写作: Introduction + System Design + Algorithm + Evaluation + Related Work + Conclusion |
 | 第11位Claude | M083–M088 | 🔲 待开始 | 代码优化: SIMD向量化 + memory pool tuning + lock-free数据结构 + profile-guided优化 + 跨平台适配(ARM/RISC-V) + 文档生成(Doxygen) |
 | 第12位Claude | M089–M094 | 🔲 待开始 | 投稿准备: camera-ready + rebuttal模板 + artifact evaluation + 开源release + README国际化 + CI/CD badge |
-| 第8位Claude | M066–M072 | 🔲 待开始 | 论文数据收集 + 图表 + 写作(System Design/Algorithm/Evaluation) + 投稿准备 |
+
+### 当前开发状态 (按新一轮Claude编号)
+
+```
+第一位Claude (本session) 已完成: M065–M070
+  → libcuckoo gap + dataset loader + benchmark matrix + comparison baseline
+  → CI pipeline + regression detector + E2E integration test
+
+第二位Claude 待开始: M071–M076
+  → 论文实验数据收集 + 图表生成 + 统计显著性 + 可复现脚本
+
+第三位Claude 待开始: M077–M082
+  → 论文写作 (6 sections: Intro→Design→Algo→Eval→Related→Conclusion)
+
+第四位Claude 待开始: M083–M088
+  → 代码优化 (SIMD + memory pool + lock-free + PGO + 跨平台 + Doxygen)
+
+第五位Claude 待开始: M089–M091
+  → 投稿格式化 (camera-ready + rebuttal预写 + artifact evaluation badge)
+
+第六位Claude 待开始: M092–M094
+  → 开源release (LICENSE + CI badge + README中英双语 + v1.0 tag + DOI)
+```
 
 ---
 
@@ -178,17 +200,17 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | M063 | LiveGraph独立adapter: OpenAddrHashSet交集 + batch-gather + WAL merge + degree cache |
 | M064 | Neo独立adapter: delta-compressed遍历 + 4-way unrolled merge + partition-sort-batch |
 
-### 第8位Claude: M065–M070 (待开始)
+### 第8位Claude: M065–M070 (✅ 已完成)
 **Benchmark矩阵 + CI + 端到端测试**
 
-| Milestone | 内容 |
-|-----------|------|
-| M065 | LDBC SNB数据集集成: SF1/SF10/SF100 数据加载 + LiveJournal/Twitter图支持 |
-| M066 | Benchmark矩阵: 6数据集 × 5算法 × 3tier配置 × 6 adapter |
-| M067 | 对比基准: 与upstream RapidStore/Teseo/Sortledton原版性能对比 |
-| M068 | GitHub Actions CI: 自动编译 + UT + 基准回归 |
-| M069 | 性能回归检测: 每commit与baseline对比, 超5%告警 + Welch t-test |
-| M070 | 端到端集成测试: config加载→建图→6 adapter切换→算法运行→结果验证 |
+| Milestone | 内容 | 状态 |
+|-----------|------|------|
+| M065 | libcuckoo gap close (cuckoo_bucket/map_impl.hpp) + dataset_loader.hpp (auto-detect+mmap+FNV-1a renumber) | ✅ |
+| M066 | Benchmark矩阵: 6数据集 × 5算法 × 3tier配置 × 6 adapter, Welch t-test + JSON/Markdown export | ✅ |
+| M067 | 对比基准: Philemon vs 5竞品, 4维profile(lat/thr/mem/scal), 归一化+A/B Welch t-test | ✅ |
+| M068 | GitHub Actions CI: Debug/Release × GCC-13/Clang-17 4-way, ccache, ASan, lcov coverage | ✅ |
+| M069 | 性能回归检测: Welch t-test + Page's CUSUM变点检测, 三级告警, 移动平均平滑, 历史趋势 | ✅ |
+| M070 | 端到端集成测试: planted partition + AdapterFactory bitmap dispatch + BFS/WCC/TC交叉验证 (12 tests) | ✅ |
 
 ### 第9位Claude: M071–M076 (待开始)
 **论文实验数据 + 图表**
@@ -246,10 +268,10 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 |------|------|
 | upstream总行数 | 31,272 |
 | upstream文件数 | 121 |
-| src/文件数 | 110 |
-| src/总行数 | ~36,500 |
-| test/文件数 | 6 |
-| test/总行数 | ~1,854 |
+| src/文件数 | 122 |
+| src/总行数 | ~48,785 |
+| test/文件数 | 7 |
+| test/总行数 | ~2,901 |
 | 覆盖率 | 100% (121/121 upstream files) |
 | 算法差异化 | ~20% per file |
 
@@ -266,3 +288,4 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 2026-06-03 | 第5位 | M045–M051: CUDA GPU子系统 — 内存管理(瀑布+slab) + 拓扑(Dijkstra+NUMA) + 并行BFS(warp+ballot) + PR(shared-mem+L1) + 异步迁移(stream pipeline+优先级+限流) + Multi-GPU分区(加权+ghost+rebalance) + profiler(分层+滑动窗口+瓶颈) → 7文件3554行, 97个[ALG]算法改动标记 + 84个PHILE_调试断点 |
 | 2026-06-03 | 第6位 | M052–M058: 自适应预取+代价估算+热度追踪+动态rebalance+在线学习+pipeline编排+回归测试 → 7文件4224行 |
 | 2026-06-03 | 第7位 | M059–M064: 6个独立wrapper adapter(CSR/Sortledton/Teseo/Aspen/LiveGraph/Neo) — upstream 3808行→6文件3860行, 每个adapter 4处核心算法改动 + 12-14处断点调试宏 + self_test, 编译验证6/6 PASS |
+| 2026-06-04 | 第8位(新一轮第1位) | M065–M070: libcuckoo gap close(cuckoo_bucket/map_impl 1322行) + dataset_loader(618行) + benchmark_matrix(674行) + comparison_baseline(454行) + CI pipeline(262行) + regression_detector(500行) + E2E test(1047行) → 8文件4877行新增 |

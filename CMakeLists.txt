@@ -48,6 +48,7 @@ target_include_directories(philemon_headers INTERFACE
     ${CMAKE_SOURCE_DIR}/src/types
     ${CMAKE_SOURCE_DIR}/src/entry
     ${CMAKE_SOURCE_DIR}/src/driver
+    ${CMAKE_SOURCE_DIR}/src/bench
 )
 target_link_libraries(philemon_headers INTERFACE pthread)
 
@@ -105,4 +106,12 @@ if(BUILD_TESTS)
 
     # ── M040: Integration test ──
     philemon_add_test(test_integration test/test_integration.cpp)
+
+    # ── M059: Six adapter adapter tests ──
+    if(EXISTS ${CMAKE_SOURCE_DIR}/test/test_six_adapters.cpp)
+        philemon_add_test(test_six_adapters test/test_six_adapters.cpp)
+    endif()
+
+    # ── M070: End-to-end integration test ──
+    philemon_add_test(test_e2e_m070 test/test_e2e_m070.cpp)
 endif()
