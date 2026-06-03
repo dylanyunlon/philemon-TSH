@@ -61,6 +61,15 @@
 namespace philemon {
 namespace query_driver {
 
+// ─── Convenience macro for trace in this module ─────────────────────
+#ifndef PHILE_LG_TRACE_FMT
+#define PHILE_LG_TRACE_FMT(fmt, ...) \
+    do { if (philemon::debug::get_debug_level() >= 3) { \
+        std::fprintf(stderr, "[TQ-TRACE %s:%d] " fmt "\n", \
+                     __func__, __LINE__, ##__VA_ARGS__); \
+    } } while(0)
+#endif
+
 // ─── Query type enum (from upstream) ────────────────────────────────
 // [KEEP] upstream used #define CONTAINS_QUERY 1, OTHER_QUERY 2
 // We make it a proper enum for type safety
@@ -577,13 +586,6 @@ inline int philemon_temquery_main(int argc, char** argv) {
 
     return 0;
 }
-
-// ─── Convenience macro for trace in this module ─────────────────────
-#define PHILE_LG_TRACE_FMT(fmt, ...) \
-    do { if (philemon::debug::get_debug_level() >= 3) { \
-        std::fprintf(stderr, "[TQ-TRACE %s:%d] " fmt "\n", \
-                     __func__, __LINE__, ##__VA_ARGS__); \
-    } } while(0)
 
 } // namespace query_driver
 } // namespace philemon
