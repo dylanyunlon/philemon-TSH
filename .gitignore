@@ -20,3 +20,4 @@ build/
 ldbc_bench
 philemon_bench
 integration_bench
+test/test_six_adapters
