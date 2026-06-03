@@ -13,7 +13,7 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 第2位Claude | M034–M040 | ✅ 完成 | CMake编译系统 + GoogleTest框架 + 94个单元测试全绿 (ctest 94/94 passed) |
 | 第3位Claude | M041–M043 | ✅ 完成 | upstream 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写 + wrapper_ops结构改造 + 辅助模块移植(15文件2799行) |
 | 第4位Claude | M044 | ✅ 完成 | NeoGraph子系统全量覆盖移植(upstream ~18000行 → 9文件3547行) — ART/RangeTree/Version/Transaction/Snapshot/Wrapper + 20%算法差异化 + 断点调试增强 |
-| 第5位Claude | M045–M051 | 🔲 待开始 | CUDA内存管理 + GPU拓扑探测 + 并行BFS/PR kernel + 异步迁移流水线 + Multi-GPU分区 |
+| 第5位Claude | M045–M051 | ✅ 完成 | CUDA内存管理(瀑布分配+slab池化) + GPU拓扑(Dijkstra路由+NUMA) + 并行BFS(warp-level+ballot) + PR(shared-mem reduce+L1收敛) + 异步迁移(双stream+优先级+限流) + Multi-GPU分区(加权放置+ghost vertex+rebalance) + GPU profiler(分层计时+滑动窗口+瓶颈检测) → 7文件3554行 |
 | 第6位Claude | M052–M058 | 🔲 待开始 | 自适应预取 + 代价估算器 + 热度追踪 + 动态rebalance + 在线学习 + GPU性能profiler |
 | 第7位Claude | M059–M065 | 🔲 待开始 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准 + CI + 性能回归 |
 | 第8位Claude | M066–M072 | 🔲 待开始 | 论文数据收集 + 图表 + 写作(System Design/Algorithm/Evaluation) + 投稿准备 |
@@ -114,18 +114,39 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 - Bitmap::lower_bound: if/else双分支prefix判断→统一abs_val计算
 - ARTKey::operator<: 逐字节depth循环→uint32直接比较
 
-### 第5位Claude: M045–M051 (待开始)
-**GPU拓扑感知 + CUDA内存管理 + 并行kernel**
+### 第5位Claude: M045–M051 ✅ (已完成)
+**GPU拓扑感知 + CUDA内存管理 + 并行kernel + 异步迁移 + 多GPU分区 + profiler**
 
 | Milestone | 内容 |
 |-----------|------|
-| M045 | CUDA内存管理: cudaMalloc/cudaMemcpy封装为TierPtr<HBM> |
-| M046 | GPU拓扑探测: nvidia-smi拓扑解析 + NVLink/PCIe带宽建模 |
-| M047 | CUDA kernel: 并行BFS (warp-level edge scan) |
-| M048 | CUDA kernel: 并行PageRank (shared-memory reduction) |
-| M049 | 异步数据迁移流水线: CUDA streams + host-to-device overlap |
-| M050 | Multi-GPU分区: 按vertex range分配到不同GPU的HBM |
-| M051 | GPU性能profiler: kernel时间 + HBM带宽 + PCIe传输量 |
+| M045 | CUDA内存管理: 瀑布回退分配(HBM→GDDR→DRAM) + slab池化(≤4MB) + 智能copy路径选择(peer/staged/chunked) + 碎片回收 |
+| M046 | GPU拓扑探测: 运行时bandwidth micro-benchmark + 带权有向拓扑图 + Dijkstra最优路由 + NUMA sysfs解析 |
+| M047 | CUDA BFS kernel: warp-level邻接表并行扫描 + ballot投票BU + warp-aggregated frontier push + 动态密度切换 |
+| M048 | CUDA PageRank kernel: 单趟融合dangling+contrib + shared-mem block-reduce + L1-norm收敛退出 + warp-shuffle规约 |
+| M049 | 异步迁移pipeline: CUDA双stream D2H/H2D overlap + access_count×recency优先级队列 + 读写分离 + 令牌桶PCIe限流 |
+| M050 | Multi-GPU分区: 容量×带宽加权贪心放置 + GPU权重比例分配 + ghost vertex bitmap + 运行时skew检测rebalance |
+| M051 | GPU profiler: 三级分层(kernel/phase/tier) + 滑动窗口p50/p95/p99 + 自动热点+PCIe饱和预警 + JSON输出 |
+
+产出文件:
+| 文件 | 行数 | upstream来源 | 算法改动 | 调试断点 |
+|------|------|-------------|---------|---------|
+| cuda_mem_manager.hpp | 687 | hetero_bench.cu HeteroAllocator (134-268行) + tiered_allocator.hpp | 18 | 21 |
+| gpu_topology.hpp | 492 | hetero_bench.cu constructor+experiment_bandwidth (134-357行) + tier_cost_model.hpp | 14 | 13 |
+| cuda_bfs_kernel.hpp | 469 | BFS.h TDStep/BUStep/bfs (330行) + BFS.cpp (302行) | 14 | 11 |
+| cuda_pagerank_kernel.hpp | 371 | PR.h page_rank (174行) + pageRank.cpp (159行) | 13 | 9 |
+| cuda_async_migration.hpp | 610 | async_migrator.hpp (430行) + hetero_bench.cu E4/E5 (666-859行) | 15 | 12 |
+| cuda_multi_gpu_partition.hpp | 482 | hetero_bench.cu partition_and_place+scaling (377-968行) + partition_index.hpp | 12 | 11 |
+| cuda_gpu_profiler.hpp | 443 | hetero_bench.cu CudaTimer+experiments (269-968行) + state_inspector.hpp | 11 | 7 |
+| **合计** | **3554** | | **97** | **84** |
+
+核心算法差异化(~20%):
+- **M045 allocate**: 固定tier→瀑布回退(HBM→GDDR0→GDDR1→DRAM+watermark); cudaMemcpyDefault→peer-direct/staged-via-host/chunked pipeline; per-call cudaMalloc→64MB slab池bump分配; 无compaction→watermark<25%回收
+- **M046 topology**: 硬编码BW常量→runtime micro-benchmark 7次取中位数; bool[][] →带权有向图adj[i][j]=GB/s; if/else路由→Dijkstra全对最短路; 忽略NUMA→/sys/bus/pci解析
+- **M047 BFS**: OMP thread-level→warp-level 32线程stride-scan邻接表+atomicCAS; per-vertex BU→__ballot_sync投票减分歧; SlidingQueue→atomicAdd warp-leader预留slot; 固定alpha/beta→0.03*sqrt(V/E)自适应
+- **M048 PR**: 两趟dangling+contrib→单趟融合warp-reduce; 独立per-thread→shared-mem block-reduce; 固定迭代→L1<epsilon(1e-6)提前退出; per-thread sum数组→warp-shuffle+block-shared+atomicAdd
+- **M049 migration**: memcpy阻塞→CUDA双stream event-based overlap; FIFO→access_count*exp(-0.1*age)优先级队列; exclusive全程→shared_lock+swap时exclusive; 无限制→令牌桶PCIe 80%预算
+- **M050 partition**: 固定25%切分→capacity*bandwidth加权贪心; 均匀分配→GPU权重比例; 无ghost→cross-partition vertex bitmap; 无rebalance→skew>2.0触发迁移
+- **M051 profiler**: CudaEvent pair→kernel/phase/tier三级分层; 单次平均→64-sample滑动窗口+p50/p95/p99; 人工读→自动top-3热点+PCIe饱和预警; printf→JSON+text双输出
 
 ### 第6位Claude: M052–M058 (待开始)
 **自适应预取 + 代价估算 + 热度追踪 + 动态rebalance**
@@ -174,8 +195,8 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 |------|------|
 | upstream总行数 | 31,272 |
 | upstream文件数 | 121 |
-| src/文件数 | 97 |
-| src/总行数 | 24,881 |
+| src/文件数 | 104 |
+| src/总行数 | 28,435 |
 | 覆盖率 | 100% (121/121 upstream files) |
 | 算法差异化 | ~20% per file |
 
@@ -188,3 +209,5 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 2026-06-02 | 第1位 (Session 5) | M030–M033 gap closure: livegraph_tiered.hpp(924行) + temporal_query_driver.hpp(591行) + driver_entry.hpp(224行) + PHILE_BREAKPOINT_NAMED宏 → 62文件24881行, 121/121 upstream全覆盖 |
 | 2026-06-03 | 第2位 | M034–M040: CMakeLists.txt + GoogleTest v1.14.0 + test/{test_core,test_index,test_algorithms,test_wrapper,test_integration}.cpp → 94/94 tests passed. 源码修复: temporal_query_driver.hpp PHILE_LG_TRACE_FMT宏前移 |
 | 2026-06-03 | 第3位 | M041–M043: 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写(每个4处核心修改) + wrapper_ops结构改造 + 辅助模块移植 → 15文件2799行新增 |
+| 2026-06-03 | 第4位 | M044: NeoGraph子系统全量覆盖移植(upstream ~18000行 → 9文件3547行) — ART/RangeTree/Version/Transaction/Snapshot/Wrapper + 20%算法差异化 + 断点调试增强 |
+| 2026-06-03 | 第5位 | M045–M051: CUDA GPU子系统 — 内存管理(瀑布+slab) + 拓扑(Dijkstra+NUMA) + 并行BFS(warp+ballot) + PR(shared-mem+L1) + 异步迁移(stream pipeline+优先级+限流) + Multi-GPU分区(加权+ghost+rebalance) + profiler(分层+滑动窗口+瓶颈) → 7文件3554行, 97个[ALG]算法改动标记 + 84个PHILE_调试断点 |
