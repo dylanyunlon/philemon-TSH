@@ -10,7 +10,7 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | Claude # | Milestones | Status | Summary |
 |----------|-----------|--------|---------|
 | 第1位Claude | M001–M033 | ✅ 完成 | upstream全覆盖算法移植(31272行→62文件24881行) + 20%差异化 + 断点调试增强 + LiveGraph tiered适配 + temporal query驱动 + entry适配 |
-| 第2位Claude | M034–M040 | 🔲 待开始 | CMake编译系统 + Google Test框架 + 各模块单元测试覆盖 |
+| 第2位Claude | M034–M040 | ✅ 完成 | CMake编译系统 + GoogleTest框架 + 94个单元测试全绿 (ctest 94/94 passed) |
 | 第3位Claude | M041–M047 | 🔲 待开始 | 多GPU拓扑感知调度 + CUDA流水线迁移 + HBM bandwidth profiler |
 | 第4位Claude | M048–M054 | 🔲 待开始 | 自适应预取策略 + 查询代价估算器 + 动态tier rebalance |
 | 第5位Claude | M055–M061 | 🔲 待开始 | 端到端benchmark矩阵(LDBC/LiveJournal/Twitter) + CI集成 + 性能回归检测 |
@@ -50,7 +50,7 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 - **Temporal Query: GetTime() → QueryPhaseTimer(p50/p95/p99); warmup phase; per-query tier-hit counters**
 - **Driver Entry: Intel VTune __itt_pause删除; hardcoded config → CLI args; --dump-config/--dry-run**
 
-### 第2位Claude: M034–M040 (待开始)
+### 第2位Claude: M034–M040 ✅ (已完成)
 **编译系统 + 单元测试框架**
 
 | Milestone | 内容 |
@@ -135,3 +135,4 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 初始 | 第1位 (Session 1-3) | M001–M029: core/index/bridge/wrapper/algorithms/debug/driver/entry 共52文件20031行 |
 | 初始 | 第1位 (Session 4) | M030–M031: NeoGraph internals 2文件 |
 | 2026-06-02 | 第1位 (Session 5) | M030–M033 gap closure: livegraph_tiered.hpp(924行) + temporal_query_driver.hpp(591行) + driver_entry.hpp(224行) + PHILE_BREAKPOINT_NAMED宏 → 62文件24881行, 121/121 upstream全覆盖 |
+| 2026-06-03 | 第2位 | M034–M040: CMakeLists.txt + GoogleTest v1.14.0 + test/{test_core,test_index,test_algorithms,test_wrapper,test_integration}.cpp → 94/94 tests passed. 源码修复: temporal_query_driver.hpp PHILE_LG_TRACE_FMT宏前移 |
