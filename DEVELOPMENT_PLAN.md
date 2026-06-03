@@ -14,8 +14,13 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 第3位Claude | M041–M043 | ✅ 完成 | upstream 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写 + wrapper_ops结构改造 + 辅助模块移植(15文件2799行) |
 | 第4位Claude | M044 | ✅ 完成 | NeoGraph子系统全量覆盖移植(upstream ~18000行 → 9文件3547行) — ART/RangeTree/Version/Transaction/Snapshot/Wrapper + 20%算法差异化 + 断点调试增强 |
 | 第5位Claude | M045–M051 | ✅ 完成 | CUDA内存管理(瀑布分配+slab池化) + GPU拓扑(Dijkstra路由+NUMA) + 并行BFS(warp-level+ballot) + PR(shared-mem reduce+L1收敛) + 异步迁移(双stream+优先级+限流) + Multi-GPU分区(加权放置+ghost vertex+rebalance) + GPU profiler(分层计时+滑动窗口+瓶颈检测) → 7文件3554行 |
-| 第6位Claude | M052–M058 | 🔲 待开始 | 自适应预取 + 代价估算器 + 热度追踪 + 动态rebalance + 在线学习 + GPU性能profiler |
-| 第7位Claude | M059–M065 | 🔲 待开始 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准 + CI + 性能回归 |
+| 第6位Claude | M052–M058 | ✅ 完成 | 自适应预取(stride+frequency双模式+EWMA+Count-Min) + 代价估算(Roofline+AMAT三层) + 热度追踪(分桶CLOCK+指数衰减+16-shard) + 动态rebalance(梯度下降+共现亲和+bandwidth×urgency) + 在线学习(Thompson Sampling+UCB1) + pipeline编排(Kahn拓扑排序+自适应worker) + 回归测试(shadow-run+Welch t-test) → 7文件4224行 |
+| 第7位Claude | M059–M064 | ✅ 完成 | 6个独立wrapper adapter全量移植(upstream 3808行→6文件3860行): CSR(分段CSR+galloping+3路归并) + Sortledton(skip-sentinel+zigzag join+epoch事务) + Teseo(adaptive intersect+RCU shadow-swap+optimistic retry) + Aspen(B+树叶链直扫+fractional cascading+CompactBloom+16桶batch) + LiveGraph(OpenAddrHashSet交集+batch-gather+WAL merge+degree cache) + Neo(delta-compressed+4-way unrolled merge+partition-sort-batch) + 编译验证6/6 PASS |
+| 第8位Claude | M065–M070 | 🔲 待开始 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准(RapidStore/Teseo/Sortledton原版) + CI pipeline + 性能回归检测 + 端到端集成测试 + 可视化dashboard |
+| 第9位Claude | M071–M076 | 🔲 待开始 | 论文实验数据收集 + 图表生成(matplotlib/pgfplots) + 统计显著性分析 + 数据一致性校验 + 实验可复现脚本 + supplementary material |
+| 第10位Claude | M077–M082 | 🔲 待开始 | 论文写作: Introduction + System Design + Algorithm + Evaluation + Related Work + Conclusion |
+| 第11位Claude | M083–M088 | 🔲 待开始 | 代码优化: SIMD向量化 + memory pool tuning + lock-free数据结构 + profile-guided优化 + 跨平台适配(ARM/RISC-V) + 文档生成(Doxygen) |
+| 第12位Claude | M089–M094 | 🔲 待开始 | 投稿准备: camera-ready + rebuttal模板 + artifact evaluation + 开源release + README国际化 + CI/CD badge |
 | 第8位Claude | M066–M072 | 🔲 待开始 | 论文数据收集 + 图表 + 写作(System Design/Algorithm/Evaluation) + 投稿准备 |
 
 ---
@@ -166,26 +171,72 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 
 | Milestone | 内容 |
 |-----------|------|
-| M059 | LDBC SNB数据集集成: SF1/SF10/SF100 数据加载 |
-| M060 | LiveJournal/Twitter/UK-2002图数据集支持 |
-| M061 | Benchmark矩阵: 6数据集 × 5算法 × 3tier配置 |
-| M062 | 对比基准: 与upstream RapidStore性能对比 |
-| M063 | GitHub Actions CI: 自动编译 + UT + 基准回归 |
-| M064 | 性能回归检测: 每commit与baseline对比, 超5%告警 |
-| M065 | 可视化dashboard: 性能趋势图 + tier利用率热力图 |
+| M059 | CSR独立adapter: 分段CSR(HBM/GDDR/DRAM) + galloping search + 3路归并交集 |
+| M060 | Sortledton独立adapter: skip-sentinel索引 + zigzag join + epoch分组事务 |
+| M061 | Teseo独立adapter: adaptive set intersection + RCU shadow-swap + optimistic retry |
+| M062 | Aspen独立adapter: B+树叶链直扫 + fractional cascading + CompactBloom + 16桶batch |
+| M063 | LiveGraph独立adapter: OpenAddrHashSet交集 + batch-gather + WAL merge + degree cache |
+| M064 | Neo独立adapter: delta-compressed遍历 + 4-way unrolled merge + partition-sort-batch |
 
-### 第8位Claude: M066–M072 (待开始)
-**论文写作 + 投稿**
+### 第8位Claude: M065–M070 (待开始)
+**Benchmark矩阵 + CI + 端到端测试**
 
 | Milestone | 内容 |
 |-----------|------|
-| M066 | 实验数据收集: 运行完整benchmark矩阵, 收集CSV |
-| M067 | 图表生成: matplotlib/pgfplots (throughput, latency, tier分布) |
-| M068 | 论文Section 1-2: Introduction + System Design |
-| M069 | 论文Section 3-4: Algorithm + Evaluation |
-| M070 | 论文Section 5-6: Related Work + Conclusion |
-| M071 | 数据一致性校验: 论文中每个数字可追溯到benchmark输出 |
-| M072 | 投稿准备: camera-ready格式 + supplementary material |
+| M065 | LDBC SNB数据集集成: SF1/SF10/SF100 数据加载 + LiveJournal/Twitter图支持 |
+| M066 | Benchmark矩阵: 6数据集 × 5算法 × 3tier配置 × 6 adapter |
+| M067 | 对比基准: 与upstream RapidStore/Teseo/Sortledton原版性能对比 |
+| M068 | GitHub Actions CI: 自动编译 + UT + 基准回归 |
+| M069 | 性能回归检测: 每commit与baseline对比, 超5%告警 + Welch t-test |
+| M070 | 端到端集成测试: config加载→建图→6 adapter切换→算法运行→结果验证 |
+
+### 第9位Claude: M071–M076 (待开始)
+**论文实验数据 + 图表**
+
+| Milestone | 内容 |
+|-----------|------|
+| M071 | 实验数据收集: 运行完整benchmark矩阵, 收集CSV |
+| M072 | 图表生成: matplotlib/pgfplots (throughput, latency, tier分布) |
+| M073 | 统计显著性分析: 置信区间 + p-value + 多组比较校正 |
+| M074 | 数据一致性校验: 论文中每个数字可追溯到benchmark输出 |
+| M075 | 实验可复现脚本: one-click reproduce from scratch |
+| M076 | Supplementary material: 附加图表 + 完整参数表 |
+
+### 第10位Claude: M077–M082 (待开始)
+**论文写作**
+
+| Milestone | 内容 |
+|-----------|------|
+| M077 | 论文Section 1: Introduction + Motivation |
+| M078 | 论文Section 2: System Design (Philemon-TSH架构) |
+| M079 | 论文Section 3: Algorithm (6个adapter的算法改进) |
+| M080 | 论文Section 4: Evaluation (实验结果分析) |
+| M081 | 论文Section 5: Related Work |
+| M082 | 论文Section 6: Conclusion + Future Work |
+
+### 第11位Claude: M083–M088 (待开始)
+**代码优化 + 文档**
+
+| Milestone | 内容 |
+|-----------|------|
+| M083 | SIMD向量化: SSE/AVX2加速intersect/edges |
+| M084 | Memory pool tuning: slab/arena allocator for adapter内部结构 |
+| M085 | Lock-free数据结构: 无锁degree cache + 无锁bloom filter |
+| M086 | Profile-guided优化: PGO编译 + 热点分析 |
+| M087 | 跨平台适配: ARM NEON + RISC-V Vector |
+| M088 | 文档生成: Doxygen + API reference + architecture diagram |
+
+### 第12位Claude: M089–M094 (待开始)
+**投稿准备 + 开源**
+
+| Milestone | 内容 |
+|-----------|------|
+| M089 | Camera-ready格式化: ACM/IEEE template |
+| M090 | Rebuttal模板: 常见reviewer质疑预写 |
+| M091 | Artifact evaluation: 可复现badge申请 |
+| M092 | 开源release: LICENSE + CONTRIBUTING + CI badge |
+| M093 | README国际化: 中英双语文档 |
+| M094 | 项目归档: tag v1.0 + DOI注册 |
 
 ---
 
@@ -195,8 +246,10 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 |------|------|
 | upstream总行数 | 31,272 |
 | upstream文件数 | 121 |
-| src/文件数 | 104 |
-| src/总行数 | 28,435 |
+| src/文件数 | 110 |
+| src/总行数 | ~36,500 |
+| test/文件数 | 6 |
+| test/总行数 | ~1,854 |
 | 覆盖率 | 100% (121/121 upstream files) |
 | 算法差异化 | ~20% per file |
 
@@ -211,3 +264,5 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 2026-06-03 | 第3位 | M041–M043: 5大核心算法(BFS/SSSP/PR/WCC/TC)算法逻辑重写(每个4处核心修改) + wrapper_ops结构改造 + 辅助模块移植 → 15文件2799行新增 |
 | 2026-06-03 | 第4位 | M044: NeoGraph子系统全量覆盖移植(upstream ~18000行 → 9文件3547行) — ART/RangeTree/Version/Transaction/Snapshot/Wrapper + 20%算法差异化 + 断点调试增强 |
 | 2026-06-03 | 第5位 | M045–M051: CUDA GPU子系统 — 内存管理(瀑布+slab) + 拓扑(Dijkstra+NUMA) + 并行BFS(warp+ballot) + PR(shared-mem+L1) + 异步迁移(stream pipeline+优先级+限流) + Multi-GPU分区(加权+ghost+rebalance) + profiler(分层+滑动窗口+瓶颈) → 7文件3554行, 97个[ALG]算法改动标记 + 84个PHILE_调试断点 |
+| 2026-06-03 | 第6位 | M052–M058: 自适应预取+代价估算+热度追踪+动态rebalance+在线学习+pipeline编排+回归测试 → 7文件4224行 |
+| 2026-06-03 | 第7位 | M059–M064: 6个独立wrapper adapter(CSR/Sortledton/Teseo/Aspen/LiveGraph/Neo) — upstream 3808行→6文件3860行, 每个adapter 4处核心算法改动 + 12-14处断点调试宏 + self_test, 编译验证6/6 PASS |
