@@ -29,9 +29,24 @@
 #include <map>
 #include <cstdio>
 
-// Upstream helper macro
+// Upstream helper macros — 适配低位tagging方案 (IS_LEAF = bit0)
+// 布局: [leaf_ptr (48b) | offset (15b) | leaf_flag (1b)]
+//   bit0 = leaf标记, bits 1-15 = offset, bits 16-63 = leaf指针
 #ifndef GET_OFFSET
 #define GET_OFFSET(ptr) ((uint16_t)((uintptr_t)(ptr) >> 1) & 0x7FFF)
+#endif
+
+#ifndef SET_OFFSET
+#define SET_OFFSET(x, offset) \
+    (assert((offset) < 32768), assert(IS_LEAF(x)), \
+     ((void*)(((uintptr_t)(x) & ~(uintptr_t)0xFFFE) | (((uintptr_t)(offset) & 0x7FFF) << 1))))
+#endif
+
+// LEAF_POINTER_CTOR: 构造 tagged leaf指针 = raw_leaf_ptr | (offset << 1) | 1
+#ifndef LEAF_POINTER_CTOR
+#define LEAF_POINTER_CTOR(x, offset) \
+    (assert((offset) < 32768), \
+     ((void*)(((uintptr_t)(x) & ~(uintptr_t)0xFFFF) | (((uintptr_t)(offset) & 0x7FFF) << 1) | 1)))
 #endif
 
 namespace container {
