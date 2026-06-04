@@ -17,32 +17,47 @@ Philemon-TSH是一个分层异构内存(HBM/GDDR/DRAM)上的时序子图索引�
 | 第6位Claude | M052–M058 | ✅ 完成 | 自适应预取(stride+frequency双模式+EWMA+Count-Min) + 代价估算(Roofline+AMAT三层) + 热度追踪(分桶CLOCK+指数衰减+16-shard) + 动态rebalance(梯度下降+共现亲和+bandwidth×urgency) + 在线学习(Thompson Sampling+UCB1) + pipeline编排(Kahn拓扑排序+自适应worker) + 回归测试(shadow-run+Welch t-test) → 7文件4224行 |
 | 第7位Claude | M059–M064 | ✅ 完成 | 6个独立wrapper adapter全量移植(upstream 3808行→6文件3860行): CSR(分段CSR+galloping+3路归并) + Sortledton(skip-sentinel+zigzag join+epoch事务) + Teseo(adaptive intersect+RCU shadow-swap+optimistic retry) + Aspen(B+树叶链直扫+fractional cascading+CompactBloom+16桶batch) + LiveGraph(OpenAddrHashSet交集+batch-gather+WAL merge+degree cache) + Neo(delta-compressed+4-way unrolled merge+partition-sort-batch) + 编译验证6/6 PASS |
 | 第8位Claude | M065–M070 | ✅ 已完成 | Benchmark矩阵(LDBC/LiveJournal/Twitter) + 对比基准(RapidStore/Teseo/Sortledton原版) + CI pipeline + 性能回归检测 + 端到端集成测试 + cuckoo index gap close + dataset loader |
-| 第9位Claude | M071–M076 | 🔲 待开始 | 论文实验数据收集 + 图表生成(matplotlib/pgfplots) + 统计显著性分析 + 数据一致性校验 + 实验可复现脚本 + supplementary material |
-| 第10位Claude | M077–M082 | 🔲 待开始 | 论文写作: Introduction + System Design + Algorithm + Evaluation + Related Work + Conclusion |
-| 第11位Claude | M083–M088 | 🔲 待开始 | 代码优化: SIMD向量化 + memory pool tuning + lock-free数据结构 + profile-guided优化 + 跨平台适配(ARM/RISC-V) + 文档生成(Doxygen) |
+| 第8位Claude(续) | M071–M072 | ✅ 已完成 | NeoGraph子系统移植(19文件/5529行) + upstream算法核心20%重写(9文件22个算法级改动点: tier编码/跨tier惩罚/采样剪枝/adaptive delta/分层L1收敛/三步jump/稠密段二分/自适应跳步/加权去重/IQR阈值/power-law/work-stealing) |
+| 第9位Claude | M073–M078 | 🔲 待开始 | 论文实验数据收集 + 图表生成(matplotlib/pgfplots) + 统计显著性分析 + 数据一致性校验 + 实验可复现脚本 + supplementary material |
+| 第10位Claude | M079–M084 | 🔲 待开始 | 论文写作: Introduction + System Design + Algorithm + Evaluation + Related Work + Conclusion |
+| 第11位Claude | M085–M088 | 🔲 待开始 | 代码优化: SIMD向量化 + memory pool tuning + lock-free数据结构 + profile-guided优化 + 跨平台适配(ARM/RISC-V) + 文档生成(Doxygen) |
 | 第12位Claude | M089–M094 | 🔲 待开始 | 投稿准备: camera-ready + rebuttal模板 + artifact evaluation + 开源release + README国际化 + CI/CD badge |
 
 ### 当前开发状态 (按新一轮Claude编号)
 
 ```
-第一位Claude (本session) 已完成: M065–M070
+第一位Claude 已完成: M065–M072
   → libcuckoo gap + dataset loader + benchmark matrix + comparison baseline
   → CI pipeline + regression detector + E2E integration test
+  → NeoGraph子系统移植(19文件/5529行)
+  → upstream算法核心20%重写: 9文件22个算法级改动点
+    (tier编码/跨tier惩罚/采样剪枝/adaptive delta/tier延迟加权/
+     tier温度boost/分层L1收敛/边权过滤/三步jump/稠密段二分/
+     自适应跳步/加权去重/IQR阈值/power-law拟合/确定性hash权重/
+     degree加权采样/work-stealing)
 
-第二位Claude 待开始: M071–M076
-  → 论文实验数据收集 + 图表生成 + 统计显著性 + 可复现脚本
+第二位Claude 待开始: M073–M078
+  → 论文实验数据收集 + 图表生成(matplotlib/pgfplots)
+  → 统计显著性分析(Welch t-test/bootstrap CI)
+  → 数据一致性校验 + 实验可复现脚本 + supplementary material
 
-第三位Claude 待开始: M077–M082
-  → 论文写作 (6 sections: Intro→Design→Algo→Eval→Related→Conclusion)
+第三位Claude 待开始: M079–M084
+  → 论文写作: Introduction + System Design + Algorithm
+  → Evaluation + Related Work + Conclusion
+  → 6 sections全文, Springer Nature sn-jnl格式
 
-第四位Claude 待开始: M083–M088
-  → 代码优化 (SIMD + memory pool + lock-free + PGO + 跨平台 + Doxygen)
+第四位Claude 待开始: M085–M088
+  → 代码优化: SIMD向量化(BFS/WCC frontier ops)
+  → memory pool tuning + lock-free数据结构
+  → profile-guided优化 + 跨平台适配(ARM/RISC-V)
 
 第五位Claude 待开始: M089–M091
-  → 投稿格式化 (camera-ready + rebuttal预写 + artifact evaluation badge)
+  → 投稿准备: camera-ready格式化 + rebuttal模板预写
+  → artifact evaluation badge + 实验复现Docker
 
 第六位Claude 待开始: M092–M094
-  → 开源release (LICENSE + CI badge + README中英双语 + v1.0 tag + DOI)
+  → 开源release: LICENSE(Apache 2.0) + CI badge
+  → README中英双语 + v1.0 tag + Zenodo DOI
 ```
 
 ---
