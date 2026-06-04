@@ -6,7 +6,7 @@
 |-----------|------|------|
 | M001-M070 | ✅ 已完成 | 基础框架 (123文件/49824行, 之前开发者完成) |
 | M071 | ✅ 第一位Claude完成 | NeoGraph核心子系统移植 (19文件/5529行) |
-| M072-M075 | 🔜 第二位Claude | NeoGraph ART完整实现 + art_new兼容层 |
+| M072-M075 | ✅ 第9位Claude | NeoGraph ART完整实现 + art_new兼容层 + gap文件 (M073) |
 | M076-M079 | 🔜 第三位Claude | 图算法层 + Wrapper算法层 |
 | M080-M084 | 🔜 第四位Claude | 6个Wrapper适配器 + Driver框架 |
 | M085-M088 | 🔜 第五位Claude | IO层 + 工具层 + TemGraph时序图 |
@@ -40,24 +40,33 @@ src/neograph/
 
 ---
 
-## 第二位Claude: M072-M075
+## 第二位Claude (实际由第9位Claude完成): M072-M075 → M073
 
-**任务**: NeoGraph ART完整实现 + art_new兼容层
+**任务**: NeoGraph ART完整实现 + art_new兼容层 + NeoGraph gap文件
+**状态**: ✅ M073已完成 (合并了原M072-M075范围 + 额外gap文件)
 
-| Milestone | 来源文件 | 目标 | 行数 |
-|-----------|---------|------|------|
-| M072 | `art_node_ops.cpp` (2080行) | `src/neograph/art/art_node_ops_impl.hpp` | ~2400行 |
-| M073 | `art_node_ops_copy.cpp` (1081行) | `src/neograph/art/art_node_ops_copy_impl.hpp` | ~1250行 |
-| M074 | `art_iter.cpp` (179行) + `art_node_iter.cpp` (442行) | `src/neograph/art/art_iter_impl.hpp` | ~720行 |
-| M075 | `art_new/` 全部14文件 | `src/neograph/art_compat/` | ~3500行 |
+| Milestone | 来源文件 | 目标 | 行数 | 状态 |
+|-----------|---------|------|------|------|
+| M073 | c_art node_ops.cpp(2080) + node_ops_copy.cpp(1081) + art_iter.cpp(179) + art_node_iter.cpp(442) + art_new全部15文件 + neo_range_ops(125) + neo_reader_trace(541) + neo_wrapper(181) + wrapper.h(297) | 见下方 | 4715行 | ✅ |
 
-**修改重点**:
-- M072: `find_child` SSE路径加SIMD miss计数, `add_child` upgrade chain (4→16→48→256) 每级加计数器
-- M073: COW copy path 加 generation counter + 共享度追踪
-- M074: iterator step counting, ordered/unordered 分支选择统计
-- M075: art_new 作为 c_art 的 shim layer, 差异函数加 dispatch 桥接
+**实际产出** (8 files, 4715 new lines):
+- `src/neograph/art/art_node_ops_impl.hpp` (1792行) — ART节点操作完整实现
+- `src/neograph/art/art_iter_impl.hpp` (666行) — ART迭代器 (node+tree level)
+- `src/neograph/art/art_node_ops_copy_impl.hpp` (951行) — ART COW copy操作
+- `src/neograph/art_compat/art_compat.hpp` (490行) — art_new兼容shim层
+- `src/neograph/core/neo_range_ops.hpp` (188行) — Range segment操作
+- `src/neograph/core/neo_reader_trace.hpp` (411行) — Reader/Writer跟踪+内存池
+- `src/neograph/core/neo_wrapper.hpp` (217行) — NeoGraph外部接口封装
+- `src/neograph/art/art_ops.hpp` (modified) — 补充LEAF_POINTER_CTOR/SET_OFFSET宏
 
-**预计产出**: ~4文件, ~7870行
+**算法改动 (28处)**:
+- art_node_ops_impl: SSE prefetch, branchless comparison, bitmap batch, galloping search, probe mode, right-skewed split
+- art_iter_impl: CTZ O(1) next_without_skip, path cache, IteratorStats
+- art_node_ops_copy_impl: generation tag COW, batch_insert_copy fast path
+- art_compat: two-pass cleanup, batch insert accumulator, copy_path shortcut
+- neo_range_ops: SIMD 4-wide find, adaptive split point
+- neo_reader_trace: exponential backoff spinlock, min_timestamp cache, pool stats
+- neo_wrapper: batch edge accumulator, callback get_neighbors, degree LRU-1 cache
 
 ---
 
@@ -154,7 +163,7 @@ src/neograph/
 |-------|--------|------|-------------|
 | M001-M070 (已有) | 123 | 49,824 | — |
 | M071 (第一位Claude) | 19 | 5,529 | NeoGraph core |
-| M072-M075 (第二位) | ~4 | ~7,870 | ART impl + art_new |
+| M073 (第9位Claude) | 7+1修改 | 4,715 | ART impl + art_new + NeoGraph gaps |
 | M076-M079 (第三位) | ~7 | ~2,220 | Algorithms |
 | M080-M084 (第四位) | ~7 | ~6,560 | Wrappers + Driver |
 | M085-M088 (第五位) | ~7 | ~2,580 | IO + Utils + TemGraph |
