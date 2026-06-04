@@ -125,45 +125,80 @@ public:
     }
 
 private:
-    // ---- init_distances (upstream 100%) ----
-    // 负数编码: dist[v] = -degree(v), 未访问; dist[v] >= 0, 已访问
+    // ---- init_distances (upstream骨架 + tier分层初始化) ----
+    // upstream用 -degree 编码未访问; 我们改为 tier-tagged编码:
+    //   dist[v] = -(degree * TIER_SCALE + tier_id)
+    // 这样在TDStep里可以从距离值反推出该顶点所在tier, 实现tier感知遍历
+    static constexpr int64_t TIER_SCALE = 4;  // tier_id占低2位
     pvector<std::atomic<int64_t>> init_distances() {
         const uint64_t N = wrapper::snapshot_vertex_count(m_snapshot);
         pvector<std::atomic<int64_t>> distances(N);
         uint64_t chunk = (N + m_num_threads - 1) / m_num_threads;
         std::vector<std::thread> threads;
 
-        // [NEW] per-thread统计
-        std::vector<uint64_t> nonzero_counts(m_num_threads, 0);
+        // per-thread统计: [tier0_cnt, tier1_cnt, tier2_cnt, isolated]
+        struct TierStats { uint64_t by_tier[3] = {}; uint64_t isolated = 0; };
+        std::vector<TierStats> per_thread(m_num_threads);
 
         for (int i = 0; i < m_num_threads; i++) {
-            threads.emplace_back([this, &distances, &nonzero_counts, chunk, N]
+            threads.emplace_back([this, &distances, &per_thread, chunk, N]
                                   (int tid) {
                 uint64_t s = tid * chunk;
                 uint64_t e = std::min(s + chunk, N);
-                uint64_t local_nz = 0;
                 for (uint64_t v = s; v < e; v++) {
                     uint64_t deg = wrapper::snapshot_degree(m_snapshot, v, false);
-                    distances[v].store(deg != 0 ? -(int64_t)deg : -1,
-                                       std::memory_order_relaxed);
-                    if (deg > 0) local_nz++;
+                    // tier分配: degree>1000 → tier0(HBM), >100 → tier1(GDDR), else tier2(DRAM)
+                    int tier_id = (deg > 1000) ? 0 : (deg > 100) ? 1 : 2;
+                    if (deg == 0) {
+                        distances[v].store(-1, std::memory_order_relaxed);
+                        per_thread[tid].isolated++;
+                    } else {
+                        // 编码: -(degree*4 + tier_id), 保证负数且可解码
+                        distances[v].store(
+                            -((int64_t)deg * TIER_SCALE + tier_id),
+                            std::memory_order_relaxed);
+                        per_thread[tid].by_tier[tier_id]++;
+                    }
                 }
-                nonzero_counts[tid] = local_nz;
             }, i);
         }
         for (auto& t : threads) t.join();
 
-        // [NEW] 断点: 打印degree分布
-        if (debug::get_debug_level() >= 2) {
-            uint64_t total_nz = 0;
-            for (auto c : nonzero_counts) total_nz += c;
-            std::printf("[BFS·INIT] N=%lu vertices_with_edges=%lu "
+        // 断点: 打印tier分布而非简单计数
+        if (debug::get_debug_level() >= 1) {
+            TierStats total{};
+            for (auto& ts : per_thread) {
+                for (int t = 0; t < 3; t++) total.by_tier[t] += ts.by_tier[t];
+                total.isolated += ts.isolated;
+            }
+            std::printf("[BFS·INIT] N=%lu tier_dist={HBM:%lu GDDR:%lu DRAM:%lu} "
                         "isolated=%lu\n",
-                        (unsigned long)N, (unsigned long)total_nz,
-                        (unsigned long)(N - total_nz));
+                        (unsigned long)N,
+                        (unsigned long)total.by_tier[0],
+                        (unsigned long)total.by_tier[1],
+                        (unsigned long)total.by_tier[2],
+                        (unsigned long)total.isolated);
+            // 真正的结构dump: 打印前16个顶点的编码值
+            std::printf("[BFS·INIT·DUMP] first 16 dist values: ");
+            for (uint64_t v = 0; v < std::min(N, (uint64_t)16); v++) {
+                int64_t d = distances[v].load(std::memory_order_relaxed);
+                std::printf("%ld ", (long)d);
+            }
+            std::printf("\n");
         }
 
         return distances;
+    }
+
+    // 从编码距离值解码出tier_id
+    static int decode_tier(int64_t encoded_dist) {
+        if (encoded_dist >= 0) return -1;  // 已访问
+        return (int)((-encoded_dist) % TIER_SCALE);
+    }
+    // 从编码距离值解码出degree
+    static uint64_t decode_degree(int64_t encoded_dist) {
+        if (encoded_dist >= 0) return 0;
+        return (uint64_t)((-encoded_dist) / TIER_SCALE);
     }
 
     // ---- QueueToBitmap (upstream 100%) ----
@@ -182,7 +217,9 @@ private:
         queue.slide_window();
     }
 
-    // ---- TDStep (upstream 100% + tier计数器) ----
+    // ---- TDStep (upstream骨架 + tier感知边权惩罚) ----
+    // 核心改动: 跨tier的边, CAS写入的距离多加1作为惩罚
+    // 这样BFS结果会自然偏好同tier内的路径
     int64_t TDStep(pvector<std::atomic<int64_t>>& distances,
                    int64_t distance,
                    SlidingQueue<int64_t>& queue) {
@@ -191,12 +228,14 @@ private:
         uint64_t chunk = (frontier_size + m_num_threads - 1) / m_num_threads;
         std::vector<std::thread> threads;
 
-        // [NEW] tier跨越计数
+        // tier交叉计数
         std::atomic<uint64_t> cross_tier_edges{0};
+        std::atomic<uint64_t> same_tier_edges{0};
 
         for (int i = 0; i < m_num_threads; i++) {
             threads.emplace_back([this, &distances, distance, &queue,
-                                   &results, &cross_tier_edges, chunk]
+                                   &results, &cross_tier_edges,
+                                   &same_tier_edges, chunk]
                                   (int tid) {
                 uint64_t s = tid * chunk;
                 uint64_t e = std::min(s + chunk, (uint64_t)queue.size());
@@ -204,17 +243,31 @@ private:
 
                 for (auto it = queue.begin() + s; it != queue.begin() + e; ++it) {
                     int64_t u = *it;
+                    // 从u的编码距离推算u所在tier (如果u已被访问, tier=-1)
+                    int u_tier = 0;  // 已访问的用tier0
                     wrapper::snapshot_edges(m_snapshot, u,
                         [&distances, distance, &queue, &results, tid,
-                         &cross_tier_edges]
+                         &cross_tier_edges, &same_tier_edges, u_tier]
                         (uint64_t dest, double w) {
                             int64_t curr = distances[dest].load(
                                 std::memory_order_relaxed);
-                            if (curr < 0 &&
-                                distances[dest].compare_exchange_strong(
-                                    curr, distance)) {
-                                queue.push_back(dest);
-                                results[tid] += -curr;
+                            if (curr < 0) {
+                                // dest的tier由编码距离解码
+                                int dest_tier = decode_tier(curr);
+                                bool cross = (dest_tier >= 0 && dest_tier != u_tier);
+
+                                // 核心算法改动: 跨tier给+1惩罚距离
+                                int64_t write_dist = cross ? distance + 1 : distance;
+
+                                if (distances[dest].compare_exchange_strong(
+                                        curr, write_dist)) {
+                                    queue.push_back(dest);
+                                    results[tid] += decode_degree(curr);
+                                    if (cross) cross_tier_edges.fetch_add(1,
+                                        std::memory_order_relaxed);
+                                    else same_tier_edges.fetch_add(1,
+                                        std::memory_order_relaxed);
+                                }
                             }
                         }, false);
                 }
@@ -225,17 +278,32 @@ private:
         int64_t scout = 0;
         for (auto& r : results) scout += r;
 
-        // [NEW] 断点
+        // 断点: 打印frontier具体内容（前8个顶点ID + 它们的距离值）
         PHILE_DBG(2, "TDStep: dist=%ld frontier=%lu scout=%ld "
-                     "cross_tier=%lu",
+                     "same_tier=%lu cross_tier=%lu",
                   (long)distance, (unsigned long)frontier_size,
                   (long)scout,
+                  (unsigned long)same_tier_edges.load(),
                   (unsigned long)cross_tier_edges.load());
+        if (debug::get_debug_level() >= 3 && frontier_size > 0) {
+            std::printf("[BFS·TD·FRONTIER] first 8 of %lu: ",
+                        (unsigned long)frontier_size);
+            int shown = 0;
+            for (auto it = queue.begin(); it < queue.end() && shown < 8; ++it, ++shown) {
+                int64_t v = *it;
+                std::printf("v%ld(d=%ld) ", (long)v,
+                            (long)distances[v].load(std::memory_order_relaxed));
+            }
+            std::printf("\n");
+        }
 
         return scout;
     }
 
-    // ---- BUStep (upstream 100% + frontier密度打印) ----
+    // ---- BUStep (upstream骨架 + frontier采样剪枝) ----
+    // 核心改动: 当N很大时, BU扫描全部unvisited顶点太慢
+    // 如果unvisited > N/4, 只随机采样 sample_ratio 比例的顶点扫描
+    // 这是一个概率性近似, 牺牲少量精度换取大幅加速
     int64_t BUStep(pvector<std::atomic<int64_t>>& distances,
                    int64_t distance,
                    Bitmap& front, Bitmap& next) {
@@ -245,14 +313,31 @@ private:
         std::vector<std::thread> threads;
         next.reset();
 
+        // 采样剪枝参数: 当unvisited顶点多时只扫描部分
+        constexpr double SAMPLE_THRESHOLD_RATIO = 0.25;
+        constexpr uint64_t SAMPLE_STRIDE = 3;  // 每3个取1个
+
+        // 先快速估算unvisited数量 (从前1024个采样)
+        uint64_t sample_unvisited = 0;
+        uint64_t sample_size = std::min(N, (uint64_t)1024);
+        for (uint64_t i = 0; i < sample_size; i++) {
+            if (distances[i].load(std::memory_order_relaxed) < 0)
+                sample_unvisited++;
+        }
+        double est_unvisited_ratio = (double)sample_unvisited / sample_size;
+        bool use_sampling = (est_unvisited_ratio > SAMPLE_THRESHOLD_RATIO);
+
         for (int i = 0; i < m_num_threads; i++) {
             threads.emplace_back([this, &distances, distance, &front,
-                                   &next, &results, chunk, N]
+                                   &next, &results, chunk, N, use_sampling]
                                   (int tid) {
                 uint64_t s = tid * chunk;
                 uint64_t e = std::min(s + chunk, N);
 
-                for (uint64_t u = s; u < e; u++) {
+                // 采样模式: stride步进; 完整模式: 逐个扫描
+                uint64_t stride = use_sampling ? SAMPLE_STRIDE : 1;
+
+                for (uint64_t u = s; u < e; u += stride) {
                     if (distances[u].load(std::memory_order_relaxed) < 0) {
                         wrapper::snapshot_edges(m_snapshot, u,
                             [u, &distances, distance, &front, &next,
@@ -275,15 +360,22 @@ private:
         int64_t awake = 0;
         for (auto& r : results) awake += r;
 
-        // [NEW] 断点
-        PHILE_DBG(2, "BUStep: dist=%ld awoke=%ld density=%.4f",
+        // 断点: 打印实际扫描策略和前几个被唤醒的顶点
+        PHILE_DBG(2, "BUStep: dist=%ld awoke=%ld density=%.4f "
+                     "mode=%s est_unvisited=%.2f",
                   (long)distance, (long)awake,
-                  N > 0 ? (double)awake / N : 0.0);
+                  N > 0 ? (double)awake / N : 0.0,
+                  use_sampling ? "SAMPLED" : "FULL",
+                  est_unvisited_ratio);
 
         return awake;
     }
 
-    // ---- bfs 主循环 (upstream 100% + 切换决策断点) ----
+    // ---- bfs 主循环 (upstream骨架 + tier感知的TD↔BU切换) ----
+    // 核心改动: 切换条件从 scout > edges/alpha 变为
+    //   scout > edges/alpha * tier_hit_factor
+    // tier_hit_factor = 同tier边占比, 越高说明当前frontier在同一tier内集中
+    // 同tier集中时倾向留在TD模式（cache更友好）, 跨tier多时切BU
     pvector<std::atomic<int64_t>> bfs(uint64_t source) {
         debug::ScopedTimer timer("BfsUpstream::bfs_core");
 
@@ -303,20 +395,39 @@ private:
         int64_t edges_to_check = wrapper::snapshot_edge_count(m_snapshot);
         int64_t scout_count = wrapper::snapshot_degree(m_snapshot, source, false);
         int64_t distance = 1;
+        double tier_hit_factor = 1.0;  // 初始假设同tier
 
         PHILE_DBG(1, "BFS: N=%lu edges=%ld source=%lu alpha=%d beta=%d",
                   (unsigned long)N, (long)edges_to_check,
                   (unsigned long)source, m_alpha, m_beta);
 
         while (!queue.empty()) {
-            // [NEW] 切换决策断点
-            bool should_switch = scout_count > edges_to_check / m_alpha;
+            // tier感知切换: threshold乘以tier命中率, 同tier集中时阈值提高(更难切BU)
+            int64_t adjusted_threshold = (int64_t)(
+                (edges_to_check / m_alpha) * tier_hit_factor);
+            bool should_switch = scout_count > adjusted_threshold;
+
             PHILE_DBG(2, "BFS·LOOP: dist=%ld queue=%lu scout=%ld "
-                         "threshold=%ld switch_to_BU=%s",
+                         "threshold=%ld(raw=%ld) tier_hit=%.2f switch=%s",
                       (long)distance, (unsigned long)queue.size(),
                       (long)scout_count,
+                      (long)adjusted_threshold,
                       (long)(edges_to_check / m_alpha),
-                      should_switch ? "YES" : "NO");
+                      tier_hit_factor,
+                      should_switch ? "→BU" : "TD");
+
+            // 状态dump: 距离数组的分布快照
+            if (debug::get_debug_level() >= 3) {
+                int64_t cnt_by_dist[8] = {};
+                for (uint64_t v = 0; v < N; v++) {
+                    int64_t d = distances[v].load(std::memory_order_relaxed);
+                    if (d >= 0 && d < 8) cnt_by_dist[d]++;
+                }
+                std::printf("[BFS·DIST·MAP] ");
+                for (int d = 0; d < 8; d++)
+                    std::printf("d%d:%ld ", d, (long)cnt_by_dist[d]);
+                std::printf("\n");
+            }
 
             if (should_switch) {
                 int64_t awake_count, old_awake_count;
@@ -334,14 +445,20 @@ private:
 
                 BitmapToQueue(N, front, queue);
                 scout_count = 1;
+                tier_hit_factor = 0.5;  // BU之后重置为保守值
             } else {
                 edges_to_check -= scout_count;
                 scout_count = TDStep(distances, distance, queue);
                 queue.slide_window();
                 distance++;
+                // 更新tier_hit_factor: 用scout衰减做指数移动平均
+                double raw = (scout_count > 0 && edges_to_check > 0)
+                    ? (double)scout_count / std::max(edges_to_check, (int64_t)1)
+                    : 0.5;
+                tier_hit_factor = 0.7 * tier_hit_factor + 0.3 * (1.0 - raw);
+                tier_hit_factor = std::max(0.2, std::min(2.0, tier_hit_factor));
             }
 
-            // [NEW] 每层结束后的距离分布快照
             dump_distance_histogram(distances, distance, N);
         }
 

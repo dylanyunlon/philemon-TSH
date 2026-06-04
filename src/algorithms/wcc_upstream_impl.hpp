@@ -106,41 +106,63 @@ public:
     }
 
 private:
-    // ---- wcc 核心 (upstream 100% + 每轮断点) ----
+    // ---- wcc 核心 (upstream骨架 + 边权过滤 + Rem's三步jump + 稳定性收敛) ----
+    // 核心改动:
+    //  1) label propagation中低权重边(w < threshold)不传播label
+    //     这实现了"弱连接不算连通"的语义, 可用于tier间弱边过滤
+    //  2) pointer jumping从两步跳(comp[comp[i]])变为三步跳(Rem's算法变体)
+    //     comp[i] = comp[comp[comp[i]]], 加速路径压缩收敛
+    //  3) 收敛检测: 要求连续2轮无变化才判定收敛(防止震荡)
     std::unique_ptr<uint64_t[]> wcc() {
         debug::ScopedTimer timer("WccUpstream::wcc_core");
         const uint64_t N = wrapper::snapshot_vertex_count(m_snapshot);
         std::unique_ptr<uint64_t[]> ptr_comp(new uint64_t[N]);
         uint64_t* comp = ptr_comp.get();
 
-        // 初始化: 每个顶点是自己的分量
         for (uint64_t i = 0; i < N; i++) comp[i] = i;
 
         bool change = true;
         uint64_t round = 0;
         uint64_t chunk = (N + m_num_threads - 1) / m_num_threads;
+        uint64_t stable_rounds = 0;   // 连续无变化轮数
+        constexpr uint64_t STABLE_THRESHOLD = 2;  // 需要连续2轮稳定
+        constexpr double WEIGHT_THRESHOLD = 0.1;   // 边权阈值
 
-        PHILE_DBG(1, "WCC: N=%lu threads=%d", (unsigned long)N, m_num_threads);
+        PHILE_DBG(1, "WCC: N=%lu threads=%d weight_thresh=%.2f "
+                     "stable_req=%lu",
+                  (unsigned long)N, m_num_threads,
+                  WEIGHT_THRESHOLD, (unsigned long)STABLE_THRESHOLD);
 
-        while (change) {
+        while (stable_rounds < STABLE_THRESHOLD) {
             change = false;
             std::vector<std::thread> threads;
 
-            // [NEW] per-thread变化计数
-            std::vector<uint64_t> change_counts(m_num_threads, 0);
+            struct RoundStats {
+                uint64_t changes = 0;
+                uint64_t filtered = 0;  // 被权重过滤的边数
+                uint64_t edges_scanned = 0;
+            };
+            std::vector<RoundStats> per_thread(m_num_threads);
 
             for (int i = 0; i < m_num_threads; i++) {
                 threads.emplace_back([this, &change, comp, N, chunk,
-                                       &change_counts]
+                                       &per_thread]
                                       (int tid) {
                     uint64_t s = chunk * tid;
                     uint64_t e = std::min(s + chunk, N);
-                    uint64_t local_changes = 0;
 
                     for (uint64_t u = s; u < e; u++) {
                         wrapper::snapshot_edges(m_snapshot, u,
-                            [comp, &change, u, N, &local_changes]
+                            [comp, &change, u, N, &per_thread, tid]
                             (uint64_t v, double w) {
+                                per_thread[tid].edges_scanned++;
+
+                                // 边权阈值过滤: 弱连接不传播
+                                if (w < WEIGHT_THRESHOLD && w >= 0) {
+                                    per_thread[tid].filtered++;
+                                    return;
+                                }
+
                                 uint64_t cu = comp[u];
                                 uint64_t cv = comp[v];
                                 if (cu == cv) return;
@@ -152,36 +174,67 @@ private:
                                 if (hi == comp[hi]) {
                                     change = true;
                                     comp[hi] = lo;
-                                    local_changes++;
+                                    per_thread[tid].changes++;
                                 }
                             });
                     }
-                    change_counts[tid] = local_changes;
                 }, i);
             }
             for (auto& t : threads) t.join();
 
-            // Pointer jumping (upstream 100%)
+            // 三步pointer jumping (Rem's变体): comp[i] = comp[comp[comp[i]]]
+            // 比标准两步跳多一层, 路径压缩更激进
             uint64_t jump_count = 0;
             for (uint64_t i = 0; i < N; i++) {
                 while (comp[i] != comp[comp[i]]) {
-                    comp[i] = comp[comp[i]];
+                    // 三步: 先跳到grandparent, 再检查
+                    uint64_t gp = comp[comp[i]];
+                    if (gp < N && comp[gp] != gp) {
+                        comp[i] = comp[gp];  // 三步跳
+                    } else {
+                        comp[i] = gp;  // 两步跳兜底
+                    }
                     jump_count++;
                 }
             }
 
-            // [NEW] 每轮断点
-            uint64_t total_changes = 0;
-            for (auto c : change_counts) total_changes += c;
+            // 汇总统计
+            RoundStats total{};
+            for (auto& rs : per_thread) {
+                total.changes += rs.changes;
+                total.filtered += rs.filtered;
+                total.edges_scanned += rs.edges_scanned;
+            }
             round++;
-            PHILE_DBG(2, "WCC·ROUND %lu: changes=%lu jumps=%lu "
-                         "converged=%s",
-                      (unsigned long)round, (unsigned long)total_changes,
+
+            if (!change) {
+                stable_rounds++;
+            } else {
+                stable_rounds = 0;  // 有变化, 重置稳定计数
+            }
+
+            PHILE_DBG(2, "WCC·ROUND %lu: changes=%lu filtered=%lu "
+                         "scanned=%lu jumps=%lu stable=%lu/%lu",
+                      (unsigned long)round,
+                      (unsigned long)total.changes,
+                      (unsigned long)total.filtered,
+                      (unsigned long)total.edges_scanned,
                       (unsigned long)jump_count,
-                      change ? "no" : "YES");
+                      (unsigned long)stable_rounds,
+                      (unsigned long)STABLE_THRESHOLD);
+
+            // 真正的分量dump: 打印当前分量ID分布片段
+            if (debug::get_debug_level() >= 3) {
+                std::printf("[WCC·COMP·DUMP] first 20 comp IDs: ");
+                for (uint64_t v = 0; v < std::min(N, (uint64_t)20); v++) {
+                    std::printf("%lu ", (unsigned long)comp[v]);
+                }
+                std::printf("\n");
+            }
         }
 
-        PHILE_DBG(1, "WCC: converged in %lu rounds", (unsigned long)round);
+        PHILE_DBG(1, "WCC: converged in %lu rounds (stable for %lu)",
+                  (unsigned long)round, (unsigned long)stable_rounds);
         dump_component_distribution(comp, N);
 
         return ptr_comp;

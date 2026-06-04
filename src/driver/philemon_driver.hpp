@@ -611,10 +611,33 @@ void PhilemonDriver<F,S>::execute_mixed_reader_writer() {
 
             WallTimer t;
 
-            // Run a scan query
+            // 算法改动: degree加权采样代替顺序扫描前1000个
+            // 高degree顶点被采样概率更高, 更好模拟真实读负载
             uint64_t edge_count = 0;
             uint64_t sample = std::min(N, (uint64_t)1000);
-            for (uint64_t v = 0; v < sample; v++) {
+
+            // 用degree做前缀和, 按degree概率采样
+            uint64_t degree_sum = 0;
+            for (uint64_t v = 0; v < N; v++) degree_sum += degree_list[v] + 1;
+
+            // 用thread id做seed的确定性采样
+            uint64_t hash_state = 0x9E3779B97F4A7C15ULL ^ (uint64_t)tid;
+            for (uint64_t s = 0; s < sample; s++) {
+                // xorshift64 确定性PRNG
+                hash_state ^= hash_state << 13;
+                hash_state ^= hash_state >> 7;
+                hash_state ^= hash_state << 17;
+                uint64_t target = hash_state % degree_sum;
+
+                // 线性搜索 (小数据量ok, 大数据量可换binary search)
+                uint64_t acc = 0;
+                uint64_t v = 0;
+                for (v = 0; v < N; v++) {
+                    acc += degree_list[v] + 1;
+                    if (acc > target) break;
+                }
+                if (v >= N) v = N - 1;
+
                 wrapper::snapshot_edges(snap_local, v,
                     [&edge_count](uint64_t dst, double w) {
                         edge_count++;
@@ -622,8 +645,10 @@ void PhilemonDriver<F,S>::execute_mixed_reader_writer() {
             }
 
             reader_times[tid] = t.elapsed_ms();
-            PHILE_DBG(2, "[Reader %d] scanned %lu edges in %.3f ms",
-                      tid, (unsigned long)edge_count,
+            PHILE_DBG(2, "[Reader %d] sampled %lu vertices, "
+                      "%lu edges in %.3f ms",
+                      tid, (unsigned long)sample,
+                      (unsigned long)edge_count,
                       reader_times[tid]);
 
             wrapper::end_thread(m_method, tid);
@@ -658,32 +683,43 @@ void PhilemonDriver<F,S>::execute_microbenchmark(
     std::vector<std::thread> threads;
     std::vector<double> thread_time(num_threads);
     std::vector<uint64_t> thread_count(num_threads, 0);
-    uint64_t chunk_size = (N + num_threads - 1) / num_threads;
 
     wrapper::set_max_threads(m_method, num_threads);
 
+    // 算法改动: 从固定chunk_size改为动态work-stealing风格分配
+    // 每个线程从共享atomic计数器取batch, 避免负载不均
+    // (原版: 固定chunk导致高degree顶点的线程跑得慢)
+    std::atomic<uint64_t> work_counter{0};
+    constexpr uint64_t BATCH_SIZE = 256;
+
     for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back([this, &snapshot, chunk_size, N, op,
-                              &thread_time, &thread_count](int tid) {
+        threads.emplace_back([this, &snapshot, N, op,
+                              &thread_time, &thread_count,
+                              &work_counter](int tid) {
             wrapper::init_thread(m_method, tid);
             auto snap = wrapper::snapshot_clone(snapshot);
-            uint64_t start = tid * chunk_size;
-            uint64_t end = std::min(start + chunk_size, N);
 
             WallTimer t;
 
-            for (uint64_t v = start; v < end; v++) {
-                if (op == PhilemonOp::GET_VERTEX) {
-                    thread_count[tid] +=
-                        wrapper::snapshot_has_vertex(snap, v) ? 1 : 0;
-                } else if (op == PhilemonOp::GET_NEIGHBOR) {
-                    uint64_t cnt = 0;
-                    wrapper::snapshot_edges(snap, v,
-                        [&cnt](uint64_t dst, double w) { cnt++; }, false);
-                    thread_count[tid] += cnt;
-                } else {
-                    thread_count[tid] +=
-                        wrapper::snapshot_degree(snap, v, false);
+            while (true) {
+                uint64_t start = work_counter.fetch_add(
+                    BATCH_SIZE, std::memory_order_relaxed);
+                if (start >= N) break;
+                uint64_t end = std::min(start + BATCH_SIZE, N);
+
+                for (uint64_t v = start; v < end; v++) {
+                    if (op == PhilemonOp::GET_VERTEX) {
+                        thread_count[tid] +=
+                            wrapper::snapshot_has_vertex(snap, v) ? 1 : 0;
+                    } else if (op == PhilemonOp::GET_NEIGHBOR) {
+                        uint64_t cnt = 0;
+                        wrapper::snapshot_edges(snap, v,
+                            [&cnt](uint64_t dst, double w) { cnt++; }, false);
+                        thread_count[tid] += cnt;
+                    } else {
+                        thread_count[tid] +=
+                            wrapper::snapshot_degree(snap, v, false);
+                    }
                 }
             }
 

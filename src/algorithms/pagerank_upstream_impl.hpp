@@ -116,7 +116,11 @@ public:
     }
 
 private:
-    // ---- page_rank 核心 (upstream 100% + 收敛断点) ----
+    // ---- page_rank 核心 (upstream骨架 + tier温度加权 + 分层收敛) ----
+    // 核心改动:
+    //  1) outgoing_contrib乘以tier_boost: HBM(hot)×1.2, GDDR×1.0, DRAM(cold)×0.8
+    //  2) 收敛判定: 每tier单独计算L1-norm, 全部tier收敛才算收敛
+    //  3) dangling sum按tier加权分配: 热tier分到更多dangling score
     std::unique_ptr<double[]> page_rank() {
         debug::ScopedTimer timer("PRUpstream::page_rank_core");
         const uint64_t N = wrapper::snapshot_vertex_count(m_snapshot);
@@ -129,37 +133,51 @@ private:
         for (uint64_t v = 0; v < N; v++) scores[v] = init_score;
 
         std::vector<double> outgoing_contrib(N, 0.0);
-        // [NEW] 保存上一轮scores用于L1-norm
         std::vector<double> prev_scores(N, init_score);
 
-        PHILE_DBG(1, "PR: N=%lu iters=%lu d=%.2f",
+        // tier分配: 按degree分3档(与BFS一致的策略)
+        // tier_id[v] = 0(HBM), 1(GDDR), 2(DRAM)
+        std::vector<uint8_t> tier_id(N);
+        for (uint64_t v = 0; v < N; v++) {
+            uint64_t deg = wrapper::snapshot_degree(m_snapshot, v, false);
+            tier_id[v] = (deg > 1000) ? 0 : (deg > 100) ? 1 : 2;
+        }
+
+        // tier温度boost因子
+        constexpr double TIER_BOOST[3] = {1.2, 1.0, 0.8};  // HBM, GDDR, DRAM
+
+        PHILE_DBG(1, "PR: N=%lu iters=%lu d=%.2f tier_boost=[%.1f,%.1f,%.1f]",
                   (unsigned long)N, (unsigned long)m_num_iterations,
-                  m_damping_factor);
+                  m_damping_factor,
+                  TIER_BOOST[0], TIER_BOOST[1], TIER_BOOST[2]);
 
         for (uint64_t iter = 0; iter < m_num_iterations; iter++) {
-            // ── Phase 1: compute outgoing_contrib + dangling_sum ──
-            std::vector<double> dangling_parts(m_num_threads, 0.0);
+            // ── Phase 1: outgoing_contrib + 分tier dangling ──
+            double dangling_by_tier[3] = {};
+            uint64_t dangling_cnt_by_tier[3] = {};
             uint64_t chunk = (N + m_num_threads - 1) / m_num_threads;
             std::vector<std::thread> threads;
 
-            // [NEW] dangling计数
-            std::vector<uint64_t> dangling_counts(m_num_threads, 0);
+            // 用临时数组收集per-thread结果
+            struct TierAcc { double dang[3]={}; uint64_t cnt[3]={}; };
+            std::vector<TierAcc> per_thread(m_num_threads);
 
             for (int i = 0; i < m_num_threads; i++) {
-                threads.emplace_back([this, &dangling_parts,
-                                       &dangling_counts,
-                                       &outgoing_contrib, chunk, N,
-                                       scores](int tid) {
+                threads.emplace_back([this, &per_thread, &outgoing_contrib,
+                                       &tier_id, chunk, N, scores]
+                                      (int tid) {
                     uint64_t s = tid * chunk;
                     uint64_t e = std::min(s + chunk, N);
                     for (uint64_t v = s; v < e; v++) {
                         uint64_t deg = wrapper::snapshot_degree(
                             m_snapshot, v, false);
+                        int t = tier_id[v];
                         if (deg == 0) {
-                            dangling_parts[tid] += scores[v];
-                            dangling_counts[tid]++;
+                            per_thread[tid].dang[t] += scores[v];
+                            per_thread[tid].cnt[t]++;
                         } else {
-                            outgoing_contrib[v] = scores[v] / deg;
+                            // tier温度加权: hot tier的贡献更大
+                            outgoing_contrib[v] = scores[v] / deg * TIER_BOOST[t];
                         }
                     }
                 }, i);
@@ -167,12 +185,17 @@ private:
             for (auto& t : threads) t.join();
             threads.clear();
 
-            double dangling_sum = 0.0;
-            uint64_t total_dangling = 0;
-            for (int i = 0; i < m_num_threads; i++) {
-                dangling_sum += dangling_parts[i];
-                total_dangling += dangling_counts[i];
+            // 汇总分tier dangling
+            for (auto& ta : per_thread) {
+                for (int t = 0; t < 3; t++) {
+                    dangling_by_tier[t] += ta.dang[t];
+                    dangling_cnt_by_tier[t] += ta.cnt[t];
+                }
             }
+            // tier感知dangling分配: 热tier分到更多
+            double dangling_sum = 0;
+            for (int t = 0; t < 3; t++)
+                dangling_sum += dangling_by_tier[t] * TIER_BOOST[t];
             dangling_sum /= N;
 
             // ── Phase 2: update scores ──
@@ -197,22 +220,50 @@ private:
             }
             for (auto& t : threads) t.join();
 
-            // [NEW] L1-norm收敛断点
-            double l1_norm = 0.0;
+            // 分层L1-norm收敛判定: 每tier独立计算
+            double l1_by_tier[3] = {};
             for (uint64_t v = 0; v < N; v++) {
-                l1_norm += std::fabs(scores[v] - prev_scores[v]);
+                l1_by_tier[tier_id[v]] += std::fabs(scores[v] - prev_scores[v]);
                 prev_scores[v] = scores[v];
             }
-            PHILE_DBG(2, "PR·ITER %lu: L1_delta=%.8f dangling_sum=%.6f "
-                         "dangling_verts=%lu/%lu",
-                      (unsigned long)iter, l1_norm, dangling_sum * N,
-                      (unsigned long)total_dangling, (unsigned long)N);
+            double l1_total = l1_by_tier[0] + l1_by_tier[1] + l1_by_tier[2];
 
-            // [NEW] 收敛提前退出 (可选, debug级别3时不退出以获得完整trace)
-            if (l1_norm < 1e-10 && debug::get_debug_level() < 3) {
-                PHILE_DBG(1, "PR: early convergence at iter %lu "
-                             "(L1=%.2e)",
-                          (unsigned long)iter, l1_norm);
+            PHILE_DBG(2, "PR·ITER %lu: L1={HBM:%.6f GDDR:%.6f DRAM:%.6f total:%.6f} "
+                         "dangling_by_tier={%lu,%lu,%lu}",
+                      (unsigned long)iter,
+                      l1_by_tier[0], l1_by_tier[1], l1_by_tier[2], l1_total,
+                      (unsigned long)dangling_cnt_by_tier[0],
+                      (unsigned long)dangling_cnt_by_tier[1],
+                      (unsigned long)dangling_cnt_by_tier[2]);
+
+            // score热力图: 打印每tier的min/max/avg score
+            if (debug::get_debug_level() >= 3) {
+                for (int t = 0; t < 3; t++) {
+                    double tmin = 1e30, tmax = 0, tsum = 0;
+                    uint64_t tcnt = 0;
+                    for (uint64_t v = 0; v < N; v++) {
+                        if (tier_id[v] == t) {
+                            tmin = std::min(tmin, scores[v]);
+                            tmax = std::max(tmax, scores[v]);
+                            tsum += scores[v];
+                            tcnt++;
+                        }
+                    }
+                    if (tcnt > 0)
+                        std::printf("[PR·HEAT] tier%d: n=%lu min=%.8f "
+                                    "avg=%.8f max=%.8f\n",
+                                    t, (unsigned long)tcnt,
+                                    tmin, tsum/tcnt, tmax);
+                }
+            }
+
+            // 全tier收敛才提前退出
+            bool all_converged = (l1_by_tier[0] < 1e-10) &&
+                                  (l1_by_tier[1] < 1e-10) &&
+                                  (l1_by_tier[2] < 1e-10);
+            if (all_converged && debug::get_debug_level() < 3) {
+                PHILE_DBG(1, "PR: all tiers converged at iter %lu",
+                          (unsigned long)iter);
                 break;
             }
         }

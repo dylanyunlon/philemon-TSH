@@ -39,6 +39,7 @@
 #include <sstream>
 #include <cstdio>
 #include <numeric>
+#include <cmath>
 
 #include "../types/philemon_types.hpp"
 #include "../utils/timer_utils.hpp"
@@ -259,6 +260,8 @@ private:
     vertexID num_vertices_{0};
     std::unordered_set<vertexID> high_degree_nodes_;
     std::unordered_set<vertexID> low_degree_nodes_;
+    std::unordered_set<vertexID> outlier_nodes_;  // degree离群节点(>3σ)
+    double powerlaw_alpha_{0};  // power-law拟合指数
 
     double initial_ratio_;
     double vertex_query_ratio_, edge_query_ratio_;
@@ -305,14 +308,42 @@ private:
                      (unsigned long)num_vertices_, path.c_str());
     }
 
-    // ─── Remove duplicates (upstream 100%) ──────────────────────────
+    // ─── Remove duplicates (upstream骨架 + 加权去重: 保留最大权重) ──
+    // upstream原版: sort → unique → erase, 遇到重复边随机保留一条
+    // 算法改动: 遇到相同(src, dst)的多条边, 保留weight最大的那条
+    //           这对tier感知分配有意义——强连接(高权重)在路由时优先级更高
     void remove_duplicates() {
-        std::sort(edge_list_.begin(), edge_list_.end());
-        edge_list_.erase(
-            std::unique(edge_list_.begin(), edge_list_.end()),
-            edge_list_.end());
-        std::fprintf(stderr, "[PREPROC] after dedup: %lu edges\n",
-                     (unsigned long)edge_list_.size());
+        // 按(src, dst)排序, 同源同目标的边相邻
+        std::sort(edge_list_.begin(), edge_list_.end(),
+            [](const auto& a, const auto& b) {
+                if (a.source != b.source) return a.source < b.source;
+                return a.destination < b.destination;
+            });
+
+        if (edge_list_.empty()) return;
+
+        // 扫描合并: 对每组重复边取max weight
+        size_t write = 0;
+        for (size_t read = 1; read < edge_list_.size(); read++) {
+            if (edge_list_[read].source == edge_list_[write].source &&
+                edge_list_[read].destination == edge_list_[write].destination) {
+                // 重复边: 保留权重更大的
+                if (edge_list_[read].weight > edge_list_[write].weight) {
+                    edge_list_[write].weight = edge_list_[read].weight;
+                }
+            } else {
+                write++;
+                if (write != read) edge_list_[write] = edge_list_[read];
+            }
+        }
+        size_t orig = edge_list_.size();
+        edge_list_.resize(write + 1);
+
+        std::fprintf(stderr, "[PREPROC] dedup: %lu → %lu edges "
+                     "(merged %lu duplicates, kept max weights)\n",
+                     (unsigned long)orig,
+                     (unsigned long)edge_list_.size(),
+                     (unsigned long)(orig - edge_list_.size()));
     }
 
     // ─── Random shuffle (upstream 100%) ─────────────────────────────
@@ -321,38 +352,123 @@ private:
         std::shuffle(edge_list_.begin(), edge_list_.end(), rng);
     }
 
-    // ─── Compute degree distribution (upstream 100%) ────────────────
+    // ─── Compute degree distribution (upstream骨架 + power-law拟合) ──
+    // upstream原版: 简单遍历计数
+    // 算法改动: 
+    //  1) 计算完degree后做log-log线性回归拟合power-law指数alpha
+    //  2) 标记degree > 3σ的离群节点(超级节点), 存入outlier_nodes_
+    //     这些节点在后续workload分配时可单独处理
     void compute_degree_distribution() {
         degree_dist_.clear();
         for (auto& e : edge_list_) {
             degree_dist_[e.source]++;
             degree_dist_[e.destination]++;
         }
+
+        // 统计degree频率用于power-law拟合
+        std::unordered_map<uint64_t, uint64_t> freq;  // degree → count
+        double sum_deg = 0;
+        double sum_sq = 0;
+        for (auto& [v, d] : degree_dist_) {
+            freq[d]++;
+            sum_deg += d;
+            sum_sq += (double)d * d;
+        }
+
+        uint64_t n = degree_dist_.size();
+        double mean = n > 0 ? sum_deg / n : 0;
+        double variance = n > 1 ? (sum_sq / n - mean * mean) : 0;
+        double stddev = std::sqrt(std::max(0.0, variance));
+
+        // log-log线性回归: log(freq) = -alpha * log(degree) + c
+        // 用最小二乘法估算alpha
+        double sum_x = 0, sum_y = 0, sum_xy = 0, sum_xx = 0;
+        int pts = 0;
+        for (auto& [d, cnt] : freq) {
+            if (d < 1 || cnt < 1) continue;
+            double x = std::log((double)d);
+            double y = std::log((double)cnt);
+            sum_x += x; sum_y += y;
+            sum_xy += x * y; sum_xx += x * x;
+            pts++;
+        }
+        double alpha = 0;
+        if (pts > 1) {
+            double denom = pts * sum_xx - sum_x * sum_x;
+            if (std::fabs(denom) > 1e-12)
+                alpha = -(pts * sum_xy - sum_x * sum_y) / denom;
+        }
+        powerlaw_alpha_ = alpha;
+
+        // 标记离群节点: degree > mean + 3*stddev
+        double outlier_threshold = mean + 3.0 * stddev;
+        outlier_nodes_.clear();
+        for (auto& [v, d] : degree_dist_) {
+            if ((double)d > outlier_threshold) {
+                outlier_nodes_.insert(v);
+            }
+        }
+
+        std::fprintf(stderr, "[PREPROC] degree stats: mean=%.1f stddev=%.1f "
+                     "alpha=%.3f outliers=%lu (threshold=%.0f)\n",
+                     mean, stddev, alpha,
+                     (unsigned long)outlier_nodes_.size(),
+                     outlier_threshold);
     }
 
-    // ─── Select high/low degree nodes (upstream 100%) ───────────────
+    // ─── Select nodes by degree (upstream骨架 + IQR自适应阈值) ────
+    // upstream原版: 固定取top high_vtx_ratio_ 和 bottom low_vtx_ratio_
+    // 算法改动: 用四分位距(IQR)自适应确定高/低度阈值
+    //   high_threshold = Q3 + 1.5 * IQR
+    //   low_threshold  = Q1 - 1.5 * IQR (下限为1)
+    //   这样阈值自动适配不同degree分布的图, 而不是写死比例
     void select_nodes_by_degree() {
         std::vector<std::pair<vertexID, uint64_t>> sorted_deg(
             degree_dist_.begin(), degree_dist_.end());
         std::sort(sorted_deg.begin(), sorted_deg.end(),
-                  [](auto& a, auto& b) { return a.second > b.second; });
+                  [](auto& a, auto& b) { return a.second < b.second; });
 
-        size_t high_count = static_cast<size_t>(sorted_deg.size() * high_vtx_ratio_);
-        size_t low_count  = static_cast<size_t>(sorted_deg.size() * low_vtx_ratio_);
+        size_t n = sorted_deg.size();
+        if (n < 4) return;
 
-        for (size_t i = 0; i < high_count && i < sorted_deg.size(); i++) {
-            high_degree_nodes_.insert(sorted_deg[i].first);
+        // 计算四分位数
+        uint64_t q1 = sorted_deg[n / 4].second;
+        uint64_t q3 = sorted_deg[3 * n / 4].second;
+        uint64_t iqr = q3 - q1;
+
+        // 自适应阈值
+        uint64_t high_thresh = q3 + (uint64_t)(1.5 * iqr);
+        uint64_t low_thresh = (iqr * 1.5 < q1) ? q1 - (uint64_t)(1.5 * iqr) : 1;
+
+        // 但也不能完全忽略用户配置的ratio, 用ratio作为选择上限
+        size_t max_high = static_cast<size_t>(n * high_vtx_ratio_);
+        size_t max_low = static_cast<size_t>(n * low_vtx_ratio_);
+
+        high_degree_nodes_.clear();
+        low_degree_nodes_.clear();
+
+        // 从高到低选高度节点
+        for (size_t i = n; i > 0 && high_degree_nodes_.size() < max_high; i--) {
+            if (sorted_deg[i - 1].second >= high_thresh) {
+                high_degree_nodes_.insert(sorted_deg[i - 1].first);
+            }
         }
-        for (size_t i = 0; i < low_count && i < sorted_deg.size(); i++) {
-            size_t idx = sorted_deg.size() - 1 - i;
-            low_degree_nodes_.insert(sorted_deg[idx].first);
+
+        // 从低到高选低度节点
+        for (size_t i = 0; i < n && low_degree_nodes_.size() < max_low; i++) {
+            if (sorted_deg[i].second <= low_thresh) {
+                low_degree_nodes_.insert(sorted_deg[i].first);
+            }
         }
 
         std::fprintf(stderr,
-            "[PREPROC] high-degree nodes: %lu (top %.1f%%)  "
-            "low-degree nodes: %lu (bottom %.1f%%)\n",
-            (unsigned long)high_degree_nodes_.size(), high_vtx_ratio_ * 100,
-            (unsigned long)low_degree_nodes_.size(), low_vtx_ratio_ * 100);
+            "[PREPROC] node selection: Q1=%lu Q3=%lu IQR=%lu "
+            "high_thresh=%lu low_thresh=%lu\n"
+            "  high-degree: %lu nodes  low-degree: %lu nodes\n",
+            (unsigned long)q1, (unsigned long)q3, (unsigned long)iqr,
+            (unsigned long)high_thresh, (unsigned long)low_thresh,
+            (unsigned long)high_degree_nodes_.size(),
+            (unsigned long)low_degree_nodes_.size());
     }
 
     // ─── Save stream (upstream binary format 100%) ──────────────────

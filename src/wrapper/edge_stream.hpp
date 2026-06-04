@@ -48,9 +48,24 @@ public:
 
     void remove_duplicates() {
         sort();
-        edge_stream_.erase(
-            std::unique(edge_stream_.begin(), edge_stream_.end()),
-            edge_stream_.end());
+        // 算法改动: 遇到重复边(same src,dst)不是丢弃，而是累加weight
+        // 这样多次出现的边获得更高权重，反映实际连接强度
+        if (edge_stream_.size() < 2) return;
+        size_t write = 0;
+        for (size_t read = 1; read < edge_stream_.size(); read++) {
+            if (edge_stream_[read] == edge_stream_[write]) {
+                // 重复边: 累加权重, 取最大时间跨度
+                edge_stream_[write].weight += edge_stream_[read].weight;
+                edge_stream_[write].ts_start = std::min(
+                    edge_stream_[write].ts_start, edge_stream_[read].ts_start);
+                edge_stream_[write].ts_end = std::max(
+                    edge_stream_[write].ts_end, edge_stream_[read].ts_end);
+            } else {
+                write++;
+                if (write != read) edge_stream_[write] = edge_stream_[read];
+            }
+        }
+        edge_stream_.resize(write + 1);
     }
 
     bool get_next_edge(weightedEdge& edge) {
@@ -67,13 +82,28 @@ public:
     int get_current_index() const { return index_; }
     void reset_index() { index_ = 0; }
 
-    // Upstream degree-based partitioning (preserved)
+    // Degree-based partitioning (算法改动: 自适应分割点代替固定10%)
+    // upstream原版: 固定取top 10%作为hot partition
+    // 改动: 用degree中位数作为分割阈值——degree > median的边进hot分区
     void reorder_and_partition(bool high_degree_first) {
         std::unordered_map<uint64_t, int> degree_map;
         for (auto& e : edge_stream_) {
             degree_map[e.source]++;
             degree_map[e.destination]++;
         }
+
+        // 计算edge-level degree的中位数
+        std::vector<int> edge_degrees;
+        edge_degrees.reserve(edge_stream_.size());
+        for (auto& e : edge_stream_) {
+            edge_degrees.push_back(std::max(degree_map[e.source],
+                                             degree_map[e.destination]));
+        }
+        std::sort(edge_degrees.begin(), edge_degrees.end());
+        int median_deg = edge_degrees.empty() ? 0
+            : edge_degrees[edge_degrees.size() / 2];
+
+        // 按degree排序
         std::sort(edge_stream_.begin(), edge_stream_.end(),
             [&](const weightedEdge& a, const weightedEdge& b) {
                 int da = std::max(degree_map[a.source],
@@ -82,11 +112,21 @@ public:
                                   degree_map[b.destination]);
                 return high_degree_first ? da > db : da < db;
             });
-        int top10 = static_cast<int>(edge_stream_.size() * 0.10);
+
+        // 自适应分割: degree > median 的边数作为hot partition大小
+        int hot_count = 0;
+        for (auto& e : edge_stream_) {
+            int d = std::max(degree_map[e.source],
+                             degree_map[e.destination]);
+            if (d > median_deg) hot_count++;
+            else break;  // 已排好序, 一旦低于median后面全是低的
+        }
+
+        // 重组: hot partition在前
         std::vector<weightedEdge> picked(
-            edge_stream_.begin(), edge_stream_.begin() + top10);
+            edge_stream_.begin(), edge_stream_.begin() + hot_count);
         picked.insert(picked.end(),
-                      edge_stream_.begin() + top10, edge_stream_.end());
+                      edge_stream_.begin() + hot_count, edge_stream_.end());
         edge_stream_ = std::move(picked);
         reset_index();
         remove_duplicates();

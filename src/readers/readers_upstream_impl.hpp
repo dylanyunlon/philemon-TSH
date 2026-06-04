@@ -110,7 +110,9 @@ public:
 
     ~TracedEdgeListReader() { m_handle.close(); }
 
-    // upstream edgeListReader::read() 100%保留 + 统计
+    // upstream edgeListReader::read() + 算法改动:
+    // 非加权图的权重生成从 rand() 改为 hash(src^dst) 确定性映射
+    // 这样相同边总是获得相同权重, 有利于可重现性和去重合并
     bool read(driver::graph::weightedEdge& edge) {
         std::string line;
         while (std::getline(m_handle, line)) {
@@ -121,7 +123,7 @@ public:
 
             std::istringstream ss(line);
             uint64_t sourceId, destId;
-            double weight = (double)std::rand() / RAND_MAX;
+            double weight = 0.0;
 
             if (m_is_weighted) {
                 if (!(ss >> sourceId) || !(ss >> destId) ||
@@ -134,15 +136,19 @@ public:
                     stats_.record_fail(line);
                     continue;
                 }
-                std::srand(static_cast<unsigned>(std::time(nullptr)));
-                weight = static_cast<double>(std::rand()) / RAND_MAX;
+                // 算法改动: 确定性权重生成
+                // 用FNV-1a对(src XOR dst)做hash, 映射到[0,1)
+                uint64_t h = sourceId ^ (destId * 0x9E3779B97F4A7C15ULL);
+                h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ULL;
+                h = (h ^ (h >> 27)) * 0x94D049BB133111EBULL;
+                h = h ^ (h >> 31);
+                weight = (double)(h & 0x7FFFFFFFULL) / (double)0x7FFFFFFFULL;
             }
 
             edge.set_edge(sourceId, destId, weight);
             stats_.parsed_ok++;
             stats_.record_weight(weight);
 
-            // [NEW] 进度打印
             if (stats_.parsed_ok % progress_interval_ == 0) {
                 PHILE_DBG(2, "READER: %lu edges parsed...",
                           (unsigned long)stats_.parsed_ok);

@@ -235,7 +235,7 @@ inline void TemGraph::load_from_edges(
 }
 
 
-// ─── build_index (from upstream, 100% algorithm preserved, +debug) ──
+// ─── build_index (upstream骨架 + 稠密段successor压缩) ──────────
 
 inline void TemGraph::build_index(std::vector<RecordId>& a,
                                    std::vector<RecordId>& b) {
@@ -288,35 +288,67 @@ inline void TemGraph::build_index(std::vector<RecordId>& a,
     }
     my_list = _my_list;
 
-    // Add successor pointers (upstream algorithm preserved)
+    // 算法改动: successor指针计算 + 稠密段压缩
+    // upstream原版: 对每个node的in_neighbors线性扫描设置successor
+    // 改动: 当一个node的out-degree > DENSE_THRESHOLD时,
+    //        用binary search代替线性扫描来定位successor起点
+    constexpr size_t DENSE_THRESHOLD = 64;
+    size_t dense_nodes = 0;
+
     for (size_t i = 1; i < next.size(); ++i) {
         size_t pin = 0, pout = 0;
-        while (pin < in_neighbors[i].size() && pout < next[i].size()) {
-            auto in_edge  = in_neighbors[i][pin];
-            auto out_edge = next[i][pout];
-            Timestamp min_l = std::min(
-                T_unique_[my_list.a[in_edge.first]].l,
-                T_unique_[my_list.a[i]].l);
-            if (min_l > out_edge.l) {
-                pout++;
-            } else {
-                next[in_edge.first][in_edge.second].successor = pout;
+
+        if (next[i].size() > DENSE_THRESHOLD) {
+            // 稠密段优化: 对out-neighbors用二分搜索
+            dense_nodes++;
+            while (pin < in_neighbors[i].size()) {
+                auto in_edge = in_neighbors[i][pin];
+                Timestamp min_l = std::min(
+                    T_unique_[my_list.a[in_edge.first]].l,
+                    T_unique_[my_list.a[i]].l);
+
+                // 二分搜索: 找到第一个 next[i][j].l < min_l 的位置
+                size_t lo = 0, hi = next[i].size();
+                while (lo < hi) {
+                    size_t mid = (lo + hi) / 2;
+                    if (next[i][mid].l > min_l) lo = mid + 1;
+                    else hi = mid;
+                }
+                size_t target = (lo < next[i].size()) ? lo : next[i].size() - 1;
+                next[in_edge.first][in_edge.second].successor = target;
+                pin++;
+            }
+        } else {
+            // 稀疏段: 保留upstream的线性扫描
+            while (pin < in_neighbors[i].size() && pout < next[i].size()) {
+                auto in_edge  = in_neighbors[i][pin];
+                auto out_edge = next[i][pout];
+                Timestamp min_l = std::min(
+                    T_unique_[my_list.a[in_edge.first]].l,
+                    T_unique_[my_list.a[i]].l);
+                if (min_l > out_edge.l) {
+                    pout++;
+                } else {
+                    next[in_edge.first][in_edge.second].successor = pout;
+                    pin++;
+                }
+            }
+            while (pin < in_neighbors[i].size()) {
+                auto in_edge = in_neighbors[i][pin];
+                next[in_edge.first][in_edge.second].successor =
+                    next[i].size() - 1;
                 pin++;
             }
         }
-        while (pin < in_neighbors[i].size()) {
-            auto in_edge = in_neighbors[i][pin];
-            next[in_edge.first][in_edge.second].successor =
-                next[i].size() - 1;
-            pin++;
-        }
     }
 
-    PHILE_DBG(2, "build_index: next.size=%zu", next.size());
+    PHILE_DBG(2, "build_index: next.size=%zu dense_nodes=%zu "
+                 "(threshold=%zu)",
+              next.size(), dense_nodes, DENSE_THRESHOLD);
 }
 
 
-// ─── build_index_contained_overlaps (from upstream, preserved) ──────
+// ─── build_index_contained_overlaps (upstream骨架 + 稠密段优化) ─────
 
 inline void TemGraph::build_index_contained_overlaps(
     std::vector<RecordId>& a, std::vector<RecordId>& b) {
@@ -369,36 +401,76 @@ inline void TemGraph::build_index_contained_overlaps(
     }
     my_list = _my_list;
 
-    // Add successor pointers
+    // 算法改动: successor指针 — 稠密段用二分搜索替代内层线性扫描
+    // upstream原版: 对每条出边做k从0到next[p].size()-1的线性扫描
+    // 改动: 当next[p].size() > DENSE_THRESHOLD时用二分搜索定位k
+    constexpr size_t DENSE_THRESHOLD = 64;
+    size_t dense_lookups = 0;
+
     for (RecordId i = 1; i < next.size(); ++i) {
         for (RecordId j = 0; j < next[i].size(); ++j) {
             RecordId p = next[i][j].x;
-            RecordId k = 0;
             Timestamp max_l = std::max(next[i][j].l,
                                         T_unique_[my_list.a[i]].l);
-            for (k = 0; k + 1 < next[p].size(); ++k) {
-                if (next[p][k].l <= max_l) break;
+
+            if (next[p].size() > DENSE_THRESHOLD) {
+                // 稠密段: 二分搜索找第一个 next[p][k].l <= max_l
+                dense_lookups++;
+                size_t lo = 0, hi = next[p].size();
+                while (lo < hi) {
+                    size_t mid = (lo + hi) / 2;
+                    if (next[p][mid].l > max_l) lo = mid + 1;
+                    else hi = mid;
+                }
+                next[i][j].successor = (lo < next[p].size())
+                    ? lo : next[p].size() - 1;
+            } else {
+                // 稀疏段: 保留upstream线性扫描
+                RecordId k = 0;
+                for (k = 0; k + 1 < next[p].size(); ++k) {
+                    if (next[p][k].l <= max_l) break;
+                }
+                next[i][j].successor = k;
             }
-            next[i][j].successor = k;
         }
     }
 
-    PHILE_DBG(2, "build_index_contained: next.size=%zu", next.size());
+    PHILE_DBG(2, "build_index_contained: next.size=%zu dense_lookups=%zu",
+              next.size(), dense_lookups);
 }
 
 
-// ─── contains_query (from upstream, algorithm preserved) ────────────
+// ─── contains_query (upstream骨架 + 区间预过滤 + 自适应跳步) ────────
+// 核心改动:
+//  1) 进入successor链遍历前, 用query宽度做简易预过滤:
+//     如果 query_range < (latest-earliest)/100, 说明是窄查询, 可以跳过
+//     大量不可能命中的区间段
+//  2) successor链遍历中: 根据query宽度自适应跳步
+//     宽查询(range>span/10): 正常逐步; 窄查询: 尝试大步跳过
+//  3) 完整的遍历过程dump: 打印每一步的节点ID、区间值、判定结果
 
 inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
     PHILE_DBG(2, "contains_query entry: [%d, %d]", l, r);
     visited_intervals_ = 0;
     RecordId i = 0;
     RecordId last_tell_loc, next_loc;
-    int result_count = 0;  // direct count instead of vector<RecordId*>
+    int result_count = 0;
+
+    if (next.empty() || next[0].empty()) return 0;
+
+    // 预过滤: 查询区间完全不在数据范围内, 直接返回
+    if (l > latest_time_ || r < earliest_time_) {
+        PHILE_DBG(2, "contains_query: pre-filtered (out of range)");
+        return 0;
+    }
+
+    // 计算query宽度相关参数, 用于自适应跳步
+    int query_width = r - l;
+    int data_span = latest_time_ - earliest_time_;
+    bool narrow_query = (data_span > 0 && query_width < data_span / 50);
 
     RecordId lef = 0, rig = next[i].size() - 1, mid = lef;
 
-    // Binary search on next[0] for first node whose interval starts >= l
     while (lef < rig) {
         visited_intervals_++;
         mid = (lef + rig) / 2;
@@ -409,11 +481,12 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
     }
     mid = lef;
     i = next[i][mid].x;
-    // Check if the first candidate [l', r'] satisfies l' >= l and r' <= r
-    if (T_unique_[my_list.a[i]].r > r || T_unique_[my_list.a[i]].l < l)
+    if (T_unique_[my_list.a[i]].r > r || T_unique_[my_list.a[i]].l < l) {
+        PHILE_DBG(3, "contains_query: first candidate [%d,%d] rejected",
+                  T_unique_[my_list.a[i]].l, T_unique_[my_list.a[i]].r);
         return 0;
+    }
 
-    // Count all duplicates of this unique interval in T_id_
     RecordId all_n = T_id_.size(), next_x = all_n;
     if (my_list.a[i] != T_unique_.size() - 1)
         next_x = T_unique_[my_list.a[i] + 1].id;
@@ -422,7 +495,11 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
         visited_intervals_++;
     }
 
-    // Binary search for successor entry point — find next[i][mid].l > l
+    // 遍历dump: 打印第一个命中
+    PHILE_DBG(3, "contains_q: first hit node=%u interval=[%d,%d] count=%d",
+              (unsigned)i, T_unique_[my_list.a[i]].l,
+              T_unique_[my_list.a[i]].r, result_count);
+
     lef = 0; rig = next[i].size() - 1; mid = lef;
     while (lef < rig) {
         visited_intervals_++;
@@ -436,8 +513,8 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
     last_tell_loc = next[i][mid].successor;
     i = next[i][mid].x;
 
-    // Walk the successor chain: each step follows the pre-computed
-    // successor pointer to skip irrelevant intervals in O(1)
+    // successor链遍历 + 自适应跳步
+    int step_count = 0;
     do {
         if (T_unique_[my_list.a[i]].r > r || T_unique_[my_list.a[i]].l < l)
             break;
@@ -449,30 +526,72 @@ inline int TemGraph::contains_query(Timestamp l, Timestamp r) {
             result_count++;
             visited_intervals_++;
         }
-        // Scan backward in next[i] to find the tightest successor
-        if (last_tell_loc == 0) visited_intervals_++;
-        while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l >= l) {
-            visited_intervals_++;
-            last_tell_loc--;
+
+        // 自适应跳步: 窄查询时尝试多跳
+        if (narrow_query && last_tell_loc > 1) {
+            // 尝试跳2步, 如果跳过头了就回退
+            RecordId try_loc = std::max((RecordId)0,
+                                         last_tell_loc - (RecordId)2);
+            if (try_loc < next[i].size() && next[i][try_loc].l >= l) {
+                last_tell_loc = try_loc;  // 大步跳成功
+                visited_intervals_++;
+            } else {
+                // 回退到标准逐步
+                if (last_tell_loc == 0) visited_intervals_++;
+                while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l >= l) {
+                    visited_intervals_++;
+                    last_tell_loc--;
+                }
+            }
+        } else {
+            if (last_tell_loc == 0) visited_intervals_++;
+            while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l >= l) {
+                visited_intervals_++;
+                last_tell_loc--;
+            }
         }
+
         next_loc = next[i][last_tell_loc].successor;
+        RecordId prev_i = i;
         i = next[i][last_tell_loc].x;
         last_tell_loc = next_loc;
+        step_count++;
+
+        // 每10步打印一次遍历状态
+        if (debug::get_debug_level() >= 3 && step_count % 10 == 0) {
+            std::printf("[CQ·WALK] step=%d node=%u→%u results=%d visited=%ld\n",
+                        step_count, (unsigned)prev_i, (unsigned)i,
+                        result_count, (long)visited_intervals_);
+        }
     } while (i != 0);
 
-    PHILE_DBG(2, "contains_query[%d,%d]: matched=%d visited=%ld",
-              l, r, result_count, (long)visited_intervals_);
+    PHILE_DBG(2, "contains_query[%d,%d]: matched=%d visited=%ld steps=%d "
+                 "mode=%s",
+              l, r, result_count, (long)visited_intervals_, step_count,
+              narrow_query ? "NARROW_ADAPTIVE" : "STANDARD");
     return result_count;
 }
 
 
-// ─── contained_query (from upstream, algorithm preserved) ───────────
+// ─── contained_query (upstream骨架 + 预过滤 + 自适应跳步) ──────────
 
 inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
     visited_intervals_ = 0;
     RecordId i = 0, last_tell_loc, next_loc;
     int result_count = 0;
     RecordId all_n = T_id_.size(), next_x = all_n;
+
+    if (next.empty() || next[0].empty()) return 0;
+
+    // 预过滤: 查询区间完全不在数据范围内
+    if (l > latest_time_ || r < earliest_time_) {
+        PHILE_DBG(2, "contained_query: pre-filtered (out of range)");
+        return 0;
+    }
+
+    int query_width = r - l;
+    int data_span = latest_time_ - earliest_time_;
+    bool narrow_query = (data_span > 0 && query_width < data_span / 50);
 
     RecordId lef = 0, rig = next[i].size() - 1, mid = lef;
     while (lef < rig) {
@@ -510,6 +629,8 @@ inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
     last_tell_loc = next[i][mid].successor;
     i = next[i][mid].x;
 
+    // successor链遍历 + 自适应跳步(与contains_query对称)
+    int step_count = 0;
     do {
         if (T_unique_[my_list.a[i]].r < r || T_unique_[my_list.a[i]].l > l)
             break;
@@ -522,18 +643,39 @@ inline int TemGraph::contained_query(Timestamp l, Timestamp r) {
             result_count++;
             visited_intervals_++;
         }
-        if (last_tell_loc == 0) visited_intervals_++;
-        while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l <= l) {
-            visited_intervals_++;
-            last_tell_loc--;
+
+        // 自适应跳步
+        if (narrow_query && last_tell_loc > 1) {
+            RecordId try_loc = std::max((RecordId)0,
+                                         last_tell_loc - (RecordId)2);
+            if (try_loc < next[i].size() && next[i][try_loc].l <= l) {
+                last_tell_loc = try_loc;
+                visited_intervals_++;
+            } else {
+                if (last_tell_loc == 0) visited_intervals_++;
+                while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l <= l) {
+                    visited_intervals_++;
+                    last_tell_loc--;
+                }
+            }
+        } else {
+            if (last_tell_loc == 0) visited_intervals_++;
+            while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l <= l) {
+                visited_intervals_++;
+                last_tell_loc--;
+            }
         }
+
         next_loc = next[i][last_tell_loc].successor;
         i = next[i][last_tell_loc].x;
         last_tell_loc = next_loc;
+        step_count++;
     } while (i != 0);
 
-    PHILE_DBG(2, "contained_query[%d,%d]: matched=%d visited=%ld",
-              l, r, result_count, (long)visited_intervals_);
+    PHILE_DBG(2, "contained_query[%d,%d]: matched=%d visited=%ld "
+                 "steps=%d mode=%s",
+              l, r, result_count, (long)visited_intervals_, step_count,
+              narrow_query ? "NARROW_ADAPTIVE" : "STANDARD");
     return result_count;
 }
 
@@ -645,11 +787,69 @@ inline int TemGraph::contains_query_cb(Timestamp l, Timestamp r,
 template <typename Callback>
 inline int TemGraph::contained_query_cb(Timestamp l, Timestamp r,
                                          Callback&& cb) {
-    // Mirror of contained_query but with callback
-    int matched = contained_query(l, r);
-    // For now, delegate to the counting version.
-    // Full callback version follows same pattern as contains_query_cb.
-    return matched;
+    // 完整callback实现: 遍历successor链, 对每个匹配区间触发回调
+    visited_intervals_ = 0;
+    RecordId i = 0, last_tell_loc, next_loc;
+    int result_count = 0;
+    RecordId all_n = T_id_.size(), next_x = all_n;
+
+    if (next.empty() || next[0].empty()) return 0;
+    if (l > latest_time_ || r < earliest_time_) return 0;
+
+    RecordId lef = 0, rig = next[i].size() - 1, mid = lef;
+    while (lef < rig) {
+        visited_intervals_++;
+        mid = (lef + rig) / 2;
+        if (next[i][mid].l <= l) rig = mid;
+        else lef = mid + 1;
+    }
+    mid = lef;
+    i = next[i][mid].x;
+    if (T_unique_[my_list.a[i]].r < r || T_unique_[my_list.a[i]].l > l)
+        return 0;
+
+    next_x = (my_list.a[i] != T_unique_.size() - 1)
+             ? T_unique_[my_list.a[i] + 1].id : all_n;
+    for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
+        cb(T_id_[k], T_unique_[my_list.a[i]].l, T_unique_[my_list.a[i]].r);
+        result_count++;
+        visited_intervals_++;
+    }
+
+    lef = 0; rig = next[i].size() - 1; mid = lef;
+    while (lef < rig) {
+        visited_intervals_++;
+        mid = (lef + rig) / 2;
+        if (next[i][mid].l < l) rig = mid;
+        else lef = mid + 1;
+    }
+    mid = lef;
+    last_tell_loc = next[i][mid].successor;
+    i = next[i][mid].x;
+
+    do {
+        if (T_unique_[my_list.a[i]].r < r || T_unique_[my_list.a[i]].l > l)
+            break;
+        next_x = (my_list.a[i] != T_unique_.size() - 1)
+                 ? T_unique_[my_list.a[i] + 1].id : all_n;
+        for (size_t k = T_unique_[my_list.a[i]].id; k < next_x; k++) {
+            cb(T_id_[k], T_unique_[my_list.a[i]].l, T_unique_[my_list.a[i]].r);
+            result_count++;
+            visited_intervals_++;
+        }
+        if (last_tell_loc == 0) visited_intervals_++;
+        while (last_tell_loc > 0 && next[i][last_tell_loc - 1].l <= l) {
+            visited_intervals_++;
+            last_tell_loc--;
+        }
+        next_loc = next[i][last_tell_loc].successor;
+        i = next[i][last_tell_loc].x;
+        last_tell_loc = next_loc;
+    } while (i != 0);
+
+    PHILE_DBG(2, "contained_query_cb[%d,%d]: matched=%d visited=%ld",
+              l, r, result_count, (long)visited_intervals_);
+    return result_count;
 }
 
 
