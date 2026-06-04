@@ -21,3 +21,10 @@ ldbc_bench
 philemon_bench
 integration_bench
 test/test_six_adapters
+
+# Experiment binaries & data
+experiment/philemon_experiment
+experiment/philemon_realscale
+experiment/data/*.txt
+experiment/logs/
+experiment/results/

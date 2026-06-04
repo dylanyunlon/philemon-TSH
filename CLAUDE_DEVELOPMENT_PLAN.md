@@ -7,165 +7,129 @@
 | M001-M070 | ✅ 已完成 | 基础框架 (123文件/49824行, 之前开发者完成) |
 | M071 | ✅ 完成 | NeoGraph核心子系统移植 (19文件/5529行) |
 | M072 | ✅ 完成 | NeoGraph M072 patch (合入M071) |
-| **M073** | **✅ 第1位Claude完成** | **ART完整实现 + art_new compat + NeoGraph gaps (7新文件/4715行)** |
-| M074-M076 | 🔜 第2位Claude | Driver补全 + NeoGraph property完善 (~1550行) |
-| M077-M079 | 🔜 第3位Claude | 跨模块集成头文件 + CMake + 测试桩 (~900行) |
-| M080-M082 | 🔜 第4位Claude | 性能基准 Benchmark (~1600行) |
-| M083-M085 | 🔜 第5位Claude | 文档 + 代码质量 (~1300行) |
-| M086-M088 | 🔜 第6位Claude | 最终集成 + 发布准备 (~300行) |
+| M073 | ✅ 完成 | ART完整实现 + art_new compat + NeoGraph gaps (7新文件/4715行) |
+| **M074-M076** | **✅ 第1位Claude完成** | **Driver补全 + 真实数据集实验 (5新文件/2503行, LiveJournal 69M边全量验证)** |
+| M077-M079 | 🔜 第2位Claude | upstream wrapper.h全量移植 + NeoGraph property补全 (~1200行) |
+| M080-M082 | 🔜 第3位Claude | 跨模块集成头文件 + CMake统一编译 + 测试桩 (~900行) |
+| M083-M085 | 🔜 第4位Claude | ART micro-benchmark + NeoGraph端到端bench (~1600行) |
+| M086-M088 | 🔜 第5位Claude | 文档 + 代码一致性 + README (~1300行) |
+| M089-M091 | 🔜 第6位Claude | 最终集成 + 编译验证 + 发布准备 (~300行) |
 
 ---
 
-## 第一位Claude (已完成): M071
+## 第1位Claude (已完成): M074-M076
 
-**交付物**: `src/neograph/` — 19文件, 5529行
+**任务**: Driver缺失workload函数补全 + 算法委托 + 真实数据集实验
 
-```
-src/neograph/
-├── include/    neo_property.hpp (合并360+487行), neo_types.hpp (合并242+146行)
-├── utils/      neo_config.hpp, neo_error_type.hpp, neo_helper.hpp,
-│               neo_spin_lock.hpp, neo_thread_pool.hpp
-├── art/        art_core.hpp, art_ops.hpp, art_leaf_impl.hpp, art_impl.hpp
-├── bitmap/     neo_bitmap.hpp
-└── core/       neo_tree.hpp, neo_tree_version.hpp, neo_tree_version_impl.hpp,
-                neo_range_tree.hpp, neo_index.hpp, neo_transaction.hpp,
-                neo_snapshot.hpp
-```
+**交付物** (5新文件, 2503行):
 
-**修改手法**: 鲁迅式~20%算法修改
-- atomic计数器 on every hot path (insert/remove/search/GC)
-- 深度直方图 (ART search depth, version chain walk)
-- 分支命中率追踪 (3-level storage dispatch)
-- 带宽统计 (copy_bytes_crossed)
-- 延迟采样 (creation_wall_ns, reader lifetime)
-- 后置断言 (sorted-order, ref_cnt underflow)
+| 文件 | 行数 | 来源 | 内容 |
+|------|------|------|------|
+| `src/driver/philemon_driver_workloads.hpp` | 416 | upstream driver.h:148-651 (~971行) | initialize_graph, execute_insert_delete, execute_batch_insert, execute_microbenchmarks |
+| `src/driver/philemon_driver_algo_delegates.hpp` | 317 | upstream driver.h:724-889 (~144行) | bfs/sssp/wcc/page_rank snapshot委托, UnionFind |
+| `experiment/philemon_realscale_experiment.cpp` | 522 | upstream main.cpp + driver.h execute() | 全流程实验入口, SNAP格式真实数据直读 |
+| `experiment/philemon_experiment.cpp` | 1094 | upstream全模块集成 | 合成数据实验 + tier感知 |
+| `experiment/run_experiment.sh` | 119 | upstream run.sh | numactl/系统信息/日志采集 |
+| `experiment/philemon_experiment.cfg` | 35 | upstream config.cfg | 配置文件 |
 
----
+**算法改动 (20%修改点)**:
+- driver_workloads: 延迟直方图P50/P99, 吞吐率checkpoint, per-thread速率分解
+- driver_algo_delegates: AlgoTierStats边遍历追踪, UnionFind按秩合并+路径压缩统计, per-level/per-iter断点
+- realscale_experiment: 自动vertex range检测(无需vertex文件), 每100万边insert进度打印, 全算法结果统计
 
-## 第二位Claude (实际由第9位Claude完成): M072-M075 → M073
-
-**任务**: NeoGraph ART完整实现 + art_new兼容层 + NeoGraph gap文件
-**状态**: ✅ M073已完成 (合并了原M072-M075范围 + 额外gap文件)
-
-| Milestone | 来源文件 | 目标 | 行数 | 状态 |
-|-----------|---------|------|------|------|
-| M073 | c_art node_ops.cpp(2080) + node_ops_copy.cpp(1081) + art_iter.cpp(179) + art_node_iter.cpp(442) + art_new全部15文件 + neo_range_ops(125) + neo_reader_trace(541) + neo_wrapper(181) + wrapper.h(297) | 见下方 | 4715行 | ✅ |
-
-**实际产出** (8 files, 4715 new lines):
-- `src/neograph/art/art_node_ops_impl.hpp` (1792行) — ART节点操作完整实现
-- `src/neograph/art/art_iter_impl.hpp` (666行) — ART迭代器 (node+tree level)
-- `src/neograph/art/art_node_ops_copy_impl.hpp` (951行) — ART COW copy操作
-- `src/neograph/art_compat/art_compat.hpp` (490行) — art_new兼容shim层
-- `src/neograph/core/neo_range_ops.hpp` (188行) — Range segment操作
-- `src/neograph/core/neo_reader_trace.hpp` (411行) — Reader/Writer跟踪+内存池
-- `src/neograph/core/neo_wrapper.hpp` (217行) — NeoGraph外部接口封装
-- `src/neograph/art/art_ops.hpp` (modified) — 补充LEAF_POINTER_CTOR/SET_OFFSET宏
-
-**算法改动 (28处)**:
-- art_node_ops_impl: SSE prefetch, branchless comparison, bitmap batch, galloping search, probe mode, right-skewed split
-- art_iter_impl: CTZ O(1) next_without_skip, path cache, IteratorStats
-- art_node_ops_copy_impl: generation tag COW, batch_insert_copy fast path
-- art_compat: two-pass cleanup, batch insert accumulator, copy_path shortcut
-- neo_range_ops: SIMD 4-wide find, adaptive split point
-- neo_reader_trace: exponential backoff spinlock, min_timestamp cache, pool stats
-- neo_wrapper: batch edge accumulator, callback get_neighbors, degree LRU-1 cache
+**实验验证**:
+- email-Enron (36,692 V / 367,662 E): BFS 2.6ms, SSSP 5.9ms, PR 8.4ms, WCC 2.1ms
+- **soc-LiveJournal1 (4,847,571 V / 68,993,773 E)**: 加载40.8s(2.56M/s), BFS 1.5s, SSSP 2.5s, PR 2.8s(5iter), WCC 0.8s, Scan 50.7M edges/s
 
 ---
 
----
+## 后续开发进度规划 (第2-6位Claude)
 
-# 后续开发进度规划 (第2-6位Claude)
-
-根据第一位Claude完成M073后的全面盘点，upstream文件迁移覆盖率已很高。
-主要缺口是**Driver补全**(~800行) 和一些胶水集成工作。
-
-## 迁移覆盖状态
-
-| 模块 | Upstream行数 | src/已有行数 | 覆盖 |
-|------|-------------|-------------|------|
-| NeoGraph ART (c_art) | 6,305 | 5,506 (art+art_compat) | ✅ |
-| NeoGraph ART (art_new) | 4,195 | (merged into art_compat) | ✅ |
-| NeoGraph core (9 .cpp+11 .h) | 7,590 | 4,753 (core+include+utils+bitmap) + 5,506 (art) | ✅ |
-| NeoGraph utils | 881 | 561 (utils/) + 228 (bitmap/) | ✅ |
-| Algorithms | 961 | 5,475 | ✅ |
-| Wrapper Algorithms | 1,009 | 1,053 | ✅ |
-| Graph IO (edge/edgeStream) | 179 | 524 | ✅ |
-| Readers | 248 | 2,189 (readers+loader) | ✅ |
-| Utils (Timer/Log/CLI) | 960 | 817 | ✅ |
-| Types | 150 | 321 | ✅ |
-| Dataset Preprocessor | 1,168 | 902 | ✅ |
-| TemGraph | 810 | 1,175 | ✅ |
-| Main | 337 | 1,134 (entry/) | ✅ |
-| Wrapper (NeoGraph+rapidstore) | 727 | 817 (wrappers) | ✅ |
-| **Driver** | **1,577** | **947** | **⚠️ 缺~800行** |
-
-## 第2位Claude: M074-M076 — Driver补全 + NeoGraph property完善
+### 第2位Claude: M077-M079 — upstream wrapper.h全量移植 + NeoGraph property
 
 | Milestone | 任务 | 来源 | 预计行数 |
 |-----------|------|------|---------|
-| M074 | driver.h缺失函数: execute_qos, execute_concurrent, execute_insert_real_ldbc, execute_batch_insert, execute_update, initialize_graph | upstream driver.h 残余~800行 | ~900行 |
-| M075 | driver.h图算法委托: bfs/sssp/wcc/page_rank snapshot委托, 性能计数集成 | upstream driver.h (724-890行) | ~400行 |
-| M076 | neo_property.cpp 完善 (upstream 487行, src 329行偏简), edge property map ops | upstream neo_property.cpp | ~250行 |
+| M077 | wrapper.h全部249行的模板函数移植 (snapshot_edges, snapshot_has_edge, snapshot_intersect等20+函数) | upstream wrapper.h | ~350行 |
+| M078 | driver.h剩余workload: execute_mixed_reader_writer (含fork/QoS版), execute_qos, execute() dispatcher switch | upstream driver.h:890-1576 | ~500行 |
+| M079 | neo_property.cpp补全: edge property map COW操作, property batch update | upstream neo_property.cpp | ~350行 |
 
-修改重点: benchmark timing μs精度, warmup检测, QoS latency直方图, property map的COW追踪
+修改重点: wrapper函数加tier感知计数器, mixed_reader_writer加读写延迟分离统计, property加COW generation tag
 
-**预计产出**: ~3-5文件, ~1550行
+**预计产出**: ~3文件, ~1200行
 
-## 第3位Claude: M077-M079 — 跨模块集成测试桩 + CMake
-
-| Milestone | 任务 | 预计行数 |
-|-----------|------|---------|
-| M077 | neograph.hpp 汇总头文件 (one-include), 条件编译宏, 全局dump_all_stats() | ~200行 |
-| M078 | CMakeLists.txt模板 (含新文件), 编译flag, 依赖检测 | ~300行 |
-| M079 | 集成测试桩: ART单元测试骨架, NeoGraph插入/查询烟雾测试 | ~400行 |
-
-修改重点: 编译开关控制ART_DEBUG/EDGE_PROPERTY_NUM, test fixture, assert宏
-
-**预计产出**: ~3-4文件, ~900行
-
-## 第4位Claude: M080-M082 — 性能基准 + Benchmark补全
+### 第3位Claude: M080-M082 — 跨模块集成 + CMake + 测试桩
 
 | Milestone | 任务 | 预计行数 |
 |-----------|------|---------|
-| M080 | ART micro-benchmark: insert/search/iterate吞吐量测量, node利用率报告 | ~500行 |
-| M081 | NeoGraph端到端benchmark: 模拟LDBC-style workload, 混合读写延迟分布 | ~600行 |
-| M082 | 跨层benchmark: HBM/GDDR/DRAM tier间数据迁移延迟, tier选择策略效果对比 | ~500行 |
+| M080 | neograph.hpp 一站式汇总头文件, 条件编译宏(ART_DEBUG/EDGE_PROPERTY_NUM), dump_all_stats() | ~200行 |
+| M081 | CMakeLists.txt更新: 新文件纳入编译, neograph子目录CMake, 依赖检测(pthread/TBB) | ~300行 |
+| M082 | 集成测试桩: ART insert/search单元测试, NeoGraph snapshot烟雾测试, driver workload冒烟测试 | ~400行 |
 
-修改重点: 统计收集器聚合, histogram输出, CSV dump
+修改重点: 编译开关, test fixture, gtest assert, CI smoke
 
-**预计产出**: ~3-4文件, ~1600行
+**预计产出**: ~4文件, ~900行
 
-## 第5位Claude: M083-M085 — 文档 + 代码质量
-
-| Milestone | 任务 | 预计行数 |
-|-----------|------|---------|
-| M083 | 全项目API文档: 每个public class/struct的Doxygen注释, 模块依赖图 | ~800行注释 |
-| M084 | 代码一致性扫描: 命名约定统一, include path整理, 未使用代码清理 | ~200行修改 |
-| M085 | README更新: 构建指南, 架构图, 模块说明, 性能数据模板 | ~300行 |
-
-**预计产出**: 修改多文件, 净新增~1300行
-
-## 第6位Claude: M086-M088 — 最终集成 + 发布准备
+### 第4位Claude: M083-M085 — 性能基准Benchmark
 
 | Milestone | 任务 | 预计行数 |
 |-----------|------|---------|
-| M086 | 编译验证: 全平台编译通过(GCC12+/Clang15+), warning清理 | 修改 |
-| M087 | 依赖清单: third-party license, 版本固定, reproducible build脚本 | ~200行 |
-| M088 | Release checklist: git tag, CHANGELOG, 迁移完成验证报告 | ~100行 |
+| M083 | ART micro-benchmark: insert/search/iterate吞吐量, node利用率, 内存碎片报告 | ~500行 |
+| M084 | NeoGraph端到端bench: LDBC-style workload, 混合读写延迟分布, snapshot开销 | ~600行 |
+| M085 | 跨层benchmark: DRAM/CXL/SSD tier迁移延迟, tier选择策略效果, 热度追踪精度 | ~500行 |
+
+修改重点: 统计聚合器, histogram/CSV输出, 多seed置信区间
+
+**预计产出**: ~3文件, ~1600行
+
+### 第5位Claude: M086-M088 — 文档 + 代码质量
+
+| Milestone | 任务 | 预计行数 |
+|-----------|------|---------|
+| M086 | 全项目API文档: 每个public class的Doxygen注释, 模块依赖图(mermaid) | ~800行注释 |
+| M087 | 代码一致性: 命名约定统一(snake_case), include路径整理, dead code清理 | ~200行修改 |
+| M088 | README更新: 构建指南, 架构图, 模块说明, 实验复现步骤 | ~300行 |
+
+**预计产出**: 多文件修改, 净新增~1300行
+
+### 第6位Claude: M089-M091 — 最终集成 + 发布
+
+| Milestone | 任务 | 预计行数 |
+|-----------|------|---------|
+| M089 | 全平台编译验证: GCC12+/Clang15+/CUDA11.5+ warning-free | 修改 |
+| M090 | 依赖清单: third-party license, 版本固定, reproducible build脚本 | ~200行 |
+| M091 | Release: git tag, CHANGELOG, 迁移完成验证报告 | ~100行 |
 
 **预计产出**: ~2-3文件, ~300行
 
 ---
 
-## 总量预估 (最终)
+## 迁移覆盖进度
 
-| Phase | 文件数 | 行数 | 内容 |
-|-------|--------|------|------|
-| M001-M072 (之前8位Claude) | 133 | 51,697 | 全模块基础迁移 |
-| **M073 (第1位Claude·本次)** | **7新+1改** | **4,715** | **ART完整实现 + art_new compat + NeoGraph gaps** |
-| M074-M076 (第2位) | ~3-5 | ~1,550 | Driver补全 + property |
-| M077-M079 (第3位) | ~3-4 | ~900 | 集成头文件 + CMake + 测试桩 |
-| M080-M082 (第4位) | ~3-4 | ~1,600 | 性能基准 |
-| M083-M085 (第5位) | 多文件修改 | ~1,300 | 文档 + 代码质量 |
-| M086-M088 (第6位) | ~2-3 | ~300 | 发布准备 |
-| **合计** | **~155+** | **~62,062** | **完整系统** |
+| 模块 | Upstream行数 | src/已有行数 | 覆盖 |
+|------|-------------|-------------|------|
+| NeoGraph ART (c_art) | 6,305 | 5,506 | ✅ |
+| NeoGraph ART (art_new) | 4,195 | (merged) | ✅ |
+| NeoGraph core | 7,590 | 10,259 | ✅ |
+| NeoGraph utils | 881 | 789 | ✅ |
+| Algorithms | 961 | 5,475 | ✅ |
+| Wrapper Algorithms | 1,009 | 1,053 | ✅ |
+| Graph IO | 179 | 524 | ✅ |
+| Readers | 248 | 2,189 | ✅ |
+| Utils | 960 | 817 | ✅ |
+| Types | 150 | 321 | ✅ |
+| Preprocessor | 1,168 | 902 | ✅ |
+| TemGraph | 810 | 1,175 | ✅ |
+| Main/Entry | 337 | 1,134 | ✅ |
+| Wrapper (NeoGraph) | 727 | 817 | ✅ |
+| **Driver** | **1,577** | **1,680** | **✅ M074补全** |
+| **wrapper.h** | **249** | **188 (partial)** | **⚠️ M077补全** |
+| **Experiment** | **(new)** | **1,770** | **✅ M076新增** |
+
+## 总量
+
+| Phase | 文件数 | 行数 |
+|-------|--------|------|
+| M001-M073 (之前) | 141 | 56,412 |
+| **M074-M076 (第1位Claude)** | **+5** | **+2,503** |
+| M077-M091 (第2-6位Claude) | ~15 | ~5,300 |
+| **合计** | **~161** | **~64,215** |
