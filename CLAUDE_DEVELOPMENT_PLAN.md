@@ -14,7 +14,7 @@
 | **M083-M085** | **✅ 第1位Claude调度Opus4.6完成** | **TemGraph GPU时序查询: CSR化 + range query + successor walk (1745行)** |
 | **M086-M088** | **✅ 第1位Claude调度Opus4.6完成** | **NeoTree GPU MVCC: version chain flat化 + snapshot scan + GC offload (1686行)** |
 | **M089-M091** | **✅ Opus4.6完成** | **跨tier benchmark + 热度placement (1386行, 0 fail)** |
-| M092-M094 | 🔜 第6位Claude | 端到端集成 + LDBC workload + 论文复现 (~1200行) |
+| **M092-M094** | **✅ Opus4.6完成** | **端到端集成 + LDBC 2.16M QPS + paper tables + regression (1719行)** |
 
 ---
 
