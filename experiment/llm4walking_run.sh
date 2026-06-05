@@ -266,6 +266,24 @@ build_experiments() {
     fi
     echo "      OK ($(du -h "$BIN_DIR/walking_warp_cooperative" | cut -f1))"
 
+    # ── 6. TemGraph GPU Temporal Queries (M083-M085) ──
+    echo "[6/6] Building walking_temgraph_gpu..."
+    if command -v nvcc &>/dev/null; then
+        echo "      nvcc detected → real CUDA build"
+        NVCC="${NVCC:-nvcc}"
+        NVFLAGS="-std=c++17 -O2 -DWALKING_CUDA=1"
+        GPU_ARCH="${GPU_ARCH:-sm_86}"
+        $NVCC $NVFLAGS -arch=$GPU_ARCH \
+            -o "$BIN_DIR/walking_temgraph_gpu" \
+            "$SRC_DIR/walking_temgraph_gpu.cu"
+    else
+        echo "      nvcc not found → CPU fallback (g++ -x c++)"
+        $CXX $CXXFLAGS $DEBUG_FLAGS -DWALKING_CUDA=0 \
+            -x c++ -o "$BIN_DIR/walking_temgraph_gpu" \
+            "$SRC_DIR/walking_temgraph_gpu.cu"
+    fi
+    echo "      OK ($(du -h "$BIN_DIR/walking_temgraph_gpu" | cut -f1))"
+
     echo ""
     echo "✓ All binaries in: $BIN_DIR/"
     ls -lh "$BIN_DIR/"

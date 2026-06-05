@@ -11,7 +11,7 @@
 | **M074-M076** | **✅ 第1位Claude完成** | **Driver补全 + 真实数据集实验 (5新文件/2503行, LiveJournal 69M边全量验证)** |
 | **M077-M079** | **✅ 第1位Claude完成** | **LLM4Walking实验 + GPU树遍历 (6新文件/3830行, ART/Interval/Galloping)** |
 | **M080-M082** | **✅ 第1位Claude调度Opus4.6完成** | **GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (1603行)** |
-| M083-M085 | 🔜 第3位Claude | TemGraph GPU时序查询 + successor链batch (~1300行) |
+| **M083-M085** | **✅ 第1位Claude调度Opus4.6完成** | **TemGraph GPU时序查询: CSR化 + range query + successor walk (1745行)** |
 | M086-M088 | 🔜 第4位Claude | NeoTree GPU MVCC snapshot + version chain scan (~1200行) |
 | M089-M091 | 🔜 第5位Claude | 跨tier benchmark + 热度驱动placement (~1300行) |
 | M092-M094 | 🔜 第6位Claude | 端到端集成 + LDBC workload + 论文复现 (~1200行) |
@@ -97,13 +97,28 @@
 | M081 | merge-path intersect | galloping | ~500行 |
 | M082 | multi-GPU ART partition | cuda_multi_gpu_partition.hpp | ~400行 |
 
-### 第3位Claude: M083-M085 — TemGraph GPU时序查询
+### 第3位Claude(Opus 4.6, 由第1位调度): M083-M085 — TemGraph GPU时序查询 ✅
 
-| Milestone | 任务 | 来源 | 预计行数 |
+**任务**: successor链CSR化 + GPU temporal range query + successor walk batch
+
+**交付物** (1新文件, 1745行):
+
+| 文件 | 行数 | 位置 | 核心算法 |
+|------|------|------|---------|
+| `walking_temgraph_gpu.cu` | 1745 | src/cuda/ | FlatSuccessorCSR + FlatTemGraph + range query kernel + successor walk kernel |
+
+**算法改动 (~20%)**:
+- M083: successor链 linked list → CSR (row_ptr/col_idx/timestamps), crossval验证
+- M084: contains/contained → GPU kern_temporal_range_query: 每thread二分查找时间窗口
+- M085: 单起点串行遍历 → kern_successor_walk: N起点GPU并行, kern_successor_walk_timed: 时间约束遍历
+
+**实验验证**: M083 CSR全对, M084 count 10000/10000 match, M085 walk 100/100 paths全对(4/8/16 hops)
+
+| Milestone | 任务 | 来源 | 实际行数 |
 |-----------|------|------|---------|
-| M083 | TemGraph successor链CSR化: 链表→CSR, 可batch并行 | tem_graph_impl.hpp contains/contained query | ~500行 |
-| M084 | GPU temporal range query kernel: 时间窗口[t1,t2]并行查找 | tem_graph_impl query逻辑 | ~400行 |
-| M085 | successor walk batch kernel: N个起点并行链遍历 | tem_graph_impl successor_link | ~400行 |
+| M083 | successor链CSR化 | tem_graph_impl.hpp | ~500行 |
+| M084 | GPU temporal range query | tem_graph_impl query | ~500行 |
+| M085 | successor walk batch | tem_graph_impl successor_link | ~400行 |
 
 ### 第4位Claude: M086-M088 — NeoTree GPU MVCC
 
