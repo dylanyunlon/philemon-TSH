@@ -10,7 +10,7 @@
 | M073 | ✅ 完成 | ART完整实现 + art_new compat + NeoGraph gaps (7新文件/4715行) |
 | **M074-M076** | **✅ 第1位Claude完成** | **Driver补全 + 真实数据集实验 (5新文件/2503行, LiveJournal 69M边全量验证)** |
 | **M077-M079** | **✅ 第1位Claude完成** | **LLM4Walking实验 + GPU树遍历 (6新文件/3830行, ART/Interval/Galloping)** |
-| M080-M082 | 🔜 第2位Claude | GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (~1300行) |
+| **M080-M082** | **✅ 第1位Claude调度Opus4.6完成** | **GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (1603行)** |
 | M083-M085 | 🔜 第3位Claude | TemGraph GPU时序查询 + successor链batch (~1300行) |
 | M086-M088 | 🔜 第4位Claude | NeoTree GPU MVCC snapshot + version chain scan (~1200行) |
 | M089-M091 | 🔜 第5位Claude | 跨tier benchmark + 热度驱动placement (~1300行) |
@@ -74,13 +74,28 @@
 
 ## 后续开发进度规划 (第2-6位Claude)
 
-### 第2位Claude: M080-M082 — GPU warp-cooperative树操作
+### 第2位Claude(Opus 4.6, 由第1位调度): M080-M082 — GPU warp-cooperative树操作 ✅
 
-| Milestone | 任务 | 来源 | 预计行数 |
+**任务**: warp协作查找 + merge-path并行交集 + 多GPU ART分区
+
+**交付物** (1新文件, 1603行):
+
+| 文件 | 行数 | 位置 | 核心算法 |
+|------|------|------|---------|
+| `walking_warp_cooperative.cu` | 1603 | src/cuda/ | §1-§8: FlatART, CPU baseline, GPU serial, warp find_child, merge-path, multi-GPU partition |
+
+**算法改动 (~20%)**:
+- M080: Node16 warp `__ballot_sync` 16-lane并行, Node48 warp-shuffle probe
+- M081: merge_path_partition对角线二分, P线程并行交集(两遍kernel)
+- M082: hash(prefix_byte)%num_gpus子树分区, scatter+per-GPU launch
+
+**实验验证**: M080 25K hits全对, M082 50000/50000 match (1/2/4 GPU), balance 1.00-1.02
+
+| Milestone | 任务 | 来源 | 实际行数 |
 |-----------|------|------|---------|
-| M080 | warp-cooperative find_child: Node16用warp内16-lane并行比较, Node48用warp-shuffle做key_map probe | art_node_ops_impl find_child | ~400行 |
-| M081 | merge-path intersect: GPU上两有序叶子列表并行交集, merge-path分区避免load imbalance | art_node_ops_impl leaf_intersect + galloping | ~500行 |
-| M082 | multi-GPU ART partition: 按prefix byte分配子树到不同GPU, 跨GPU查询路由 | cuda_multi_gpu_partition.hpp | ~400行 |
+| M080 | warp-cooperative find_child | art_node_ops_impl find_child | ~400行 |
+| M081 | merge-path intersect | galloping | ~500行 |
+| M082 | multi-GPU ART partition | cuda_multi_gpu_partition.hpp | ~400行 |
 
 ### 第3位Claude: M083-M085 — TemGraph GPU时序查询
 
