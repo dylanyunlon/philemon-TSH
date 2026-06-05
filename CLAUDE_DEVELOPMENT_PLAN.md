@@ -161,6 +161,26 @@
 
 ---
 
+### 第7位Claude(Opus 4.6, 由第1位调度): M095-M097 — Wrapper Debug + Driver Harness + Unified Runner ✅
+
+| Milestone | 任务 | 实际行数 | 状态 |
+|-----------|------|---------|------|
+| M095 | Wrapper层综合debug实验(wrapper.h全46函数移植+冲突检测/热度追踪/自适应分块) | 975行 | ✅ 完成 |
+| M096 | Driver Harness实验(driver.h算法套件+波次插入/延迟直方图/方向切换BFS/二阶导PageRank) | 896行 | ✅ 完成 |
+| M097 | 统一入口(M095+M096+BFS-WCC Jaccard交叉验证+SSSP三角不等式+regression检测+JSON摘要) | 1118行 | ✅ 完成 |
+
+**输出文件**:
+- `experiment/wrapper_debug_experiment.cpp` (975行)
+- `experiment/driver_harness_experiment.cpp` (896行)
+- `experiment/unified_debug_runner.cpp` (1118行)
+- `experiment/results/m097_summary.json`
+
+**编译**: `g++ -std=c++17 -O2 -pthread` 三个文件独立编译通过 ✅
+**运行**: M095全部46函数测试通过, M096全算法(BFS/SSSP/WCC/PageRank)通过, M097交叉验证Jaccard=1.0 SSSP三角不等式0违规 ✅
+**20%算法修改**: 冲突检测+CAS重试, 自适应分块batch, 热度追踪top-K, degree直方图, snapshot版本校验, 波次插入+BFS验证, 延迟直方图P50/P95/P99/P999, BFS方向切换启发式, PageRank二阶导收敛, WCC按秩合并, BFS-WCC Jaccard相似度, SSSP三角不等式覆盖率, regression检测
+
+---
+
 ## 迁移覆盖进度
 
 | 模块 | Upstream行数 | src/已有行数 | 覆盖 |
@@ -190,4 +210,5 @@
 | M001-M073 (之前) | 141 | 56,412 |
 | **M074-M076 (第1位Claude)** | **+5** | **+2,503** |
 | M077-M091 (第2-6位Claude) | ~15 | ~5,300 |
-| **合计** | **~161** | **~64,215** |
+| **M095-M097 (第7位Claude)** | **+3** | **+2,989** |
+| **合计** | **~164** | **~67,204** |
