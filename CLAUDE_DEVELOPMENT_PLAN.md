@@ -9,11 +9,12 @@
 | M072 | ✅ 完成 | NeoGraph M072 patch (合入M071) |
 | M073 | ✅ 完成 | ART完整实现 + art_new compat + NeoGraph gaps (7新文件/4715行) |
 | **M074-M076** | **✅ 第1位Claude完成** | **Driver补全 + 真实数据集实验 (5新文件/2503行, LiveJournal 69M边全量验证)** |
-| M077-M079 | 🔜 第2位Claude | upstream wrapper.h全量移植 + NeoGraph property补全 (~1200行) |
-| M080-M082 | 🔜 第3位Claude | 跨模块集成头文件 + CMake统一编译 + 测试桩 (~900行) |
-| M083-M085 | 🔜 第4位Claude | ART micro-benchmark + NeoGraph端到端bench (~1600行) |
-| M086-M088 | 🔜 第5位Claude | 文档 + 代码一致性 + README (~1300行) |
-| M089-M091 | 🔜 第6位Claude | 最终集成 + 编译验证 + 发布准备 (~300行) |
+| **M077-M079** | **✅ 第1位Claude完成** | **LLM4Walking实验 + GPU树遍历 (6新文件/3830行, ART/Interval/Galloping)** |
+| M080-M082 | 🔜 第2位Claude | GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (~1300行) |
+| M083-M085 | 🔜 第3位Claude | TemGraph GPU时序查询 + successor链batch (~1300行) |
+| M086-M088 | 🔜 第4位Claude | NeoTree GPU MVCC snapshot + version chain scan (~1200行) |
+| M089-M091 | 🔜 第5位Claude | 跨tier benchmark + 热度驱动placement (~1300行) |
+| M092-M094 | 🔜 第6位Claude | 端到端集成 + LDBC workload + 论文复现 (~1200行) |
 
 ---
 
@@ -45,61 +46,73 @@
 
 ## 后续开发进度规划 (第2-6位Claude)
 
-### 第2位Claude: M077-M079 — upstream wrapper.h全量移植 + NeoGraph property
+### 第1位Claude (续): M077-M079 — LLM4Walking实验 + GPU树遍历
+
+**任务**: Walking实验框架 + 图遍历算法移植 + GPU树遍历kernel
+
+**交付物** (6新文件, 3830行):
+
+| 文件 | 行数 | 位置 | 核心算法 |
+|------|------|------|---------|
+| `walking_experiment.cpp` | 1095 | experiment/ | BFS direction-switch, PR收敛追踪, SSSP delta-stepping, WCC label propagation, TC |
+| `walking_realscale.cpp` | 522 | experiment/ | 真实数据集加载 + 全算法执行 + per-100万checkpoint |
+| `walking_inspector.cpp` | 633 | experiment/ | 三角不等式验证, PR归一化断言, WCC BFS交叉验证 |
+| `walking_gpu_tree.cu` | 866 | src/cuda/ | GPU ART find_child/node_search/BFS + galloping intersect + interval stab |
+| `walking.cfg` | 35 | experiment/ | 参数配置 |
+| `llm4walking_run.sh` | 679 | experiment/ | pipeline编排 |
+
+**算法改动 (~20%)**:
+- BFS: tier_hit_count[3], direction-switch阈值打印
+- PageRank: 二阶导数收敛率, 早停, top-5/每轮
+- SSSP: 距离分桶直方图, 松弛率追踪
+- WCC: 组件大小分布, 每轮merge计数
+- ART find_child: 四路dispatch GPU化, 预判节点类型跳过升级链
+- Intersect: galloping指数探测+二分, skew>4x自动切换 (84K skips实测)
+- Interval stab: 二分预处理缩小线性扫描范围
+
+---
+
+## 后续开发进度规划 (第2-6位Claude)
+
+### 第2位Claude: M080-M082 — GPU warp-cooperative树操作
 
 | Milestone | 任务 | 来源 | 预计行数 |
 |-----------|------|------|---------|
-| M077 | wrapper.h全部249行的模板函数移植 (snapshot_edges, snapshot_has_edge, snapshot_intersect等20+函数) | upstream wrapper.h | ~350行 |
-| M078 | driver.h剩余workload: execute_mixed_reader_writer (含fork/QoS版), execute_qos, execute() dispatcher switch | upstream driver.h:890-1576 | ~500行 |
-| M079 | neo_property.cpp补全: edge property map COW操作, property batch update | upstream neo_property.cpp | ~350行 |
+| M080 | warp-cooperative find_child: Node16用warp内16-lane并行比较, Node48用warp-shuffle做key_map probe | art_node_ops_impl find_child | ~400行 |
+| M081 | merge-path intersect: GPU上两有序叶子列表并行交集, merge-path分区避免load imbalance | art_node_ops_impl leaf_intersect + galloping | ~500行 |
+| M082 | multi-GPU ART partition: 按prefix byte分配子树到不同GPU, 跨GPU查询路由 | cuda_multi_gpu_partition.hpp | ~400行 |
 
-修改重点: wrapper函数加tier感知计数器, mixed_reader_writer加读写延迟分离统计, property加COW generation tag
+### 第3位Claude: M083-M085 — TemGraph GPU时序查询
 
-**预计产出**: ~3文件, ~1200行
+| Milestone | 任务 | 来源 | 预计行数 |
+|-----------|------|------|---------|
+| M083 | TemGraph successor链CSR化: 链表→CSR, 可batch并行 | tem_graph_impl.hpp contains/contained query | ~500行 |
+| M084 | GPU temporal range query kernel: 时间窗口[t1,t2]并行查找 | tem_graph_impl query逻辑 | ~400行 |
+| M085 | successor walk batch kernel: N个起点并行链遍历 | tem_graph_impl successor_link | ~400行 |
 
-### 第3位Claude: M080-M082 — 跨模块集成 + CMake + 测试桩
+### 第4位Claude: M086-M088 — NeoTree GPU MVCC
 
-| Milestone | 任务 | 预计行数 |
-|-----------|------|---------|
-| M080 | neograph.hpp 一站式汇总头文件, 条件编译宏(ART_DEBUG/EDGE_PROPERTY_NUM), dump_all_stats() | ~200行 |
-| M081 | CMakeLists.txt更新: 新文件纳入编译, neograph子目录CMake, 依赖检测(pthread/TBB) | ~300行 |
-| M082 | 集成测试桩: ART insert/search单元测试, NeoGraph snapshot烟雾测试, driver workload冒烟测试 | ~400行 |
+| Milestone | 任务 | 来源 | 预计行数 |
+|-----------|------|------|---------|
+| M086 | version chain GPU scan: 版本链flat化, GPU并行查timestamp | neo_tree_version_impl.hpp find_version | ~500行 |
+| M087 | GPU snapshot read: GPU上snapshot_edges遍历 | neo_snapshot.hpp + neo_tree.hpp edges() | ~400行 |
+| M088 | GC offload: 过期版本判定GPU化, 回收CPU执行 | neo_tree_version_impl GC | ~300行 |
 
-修改重点: 编译开关, test fixture, gtest assert, CI smoke
+### 第5位Claude: M089-M091 — 跨tier Benchmark
 
-**预计产出**: ~4文件, ~900行
+| Milestone | 任务 | 来源 | 预计行数 |
+|-----------|------|------|---------|
+| M089 | tier迁移延迟矩阵: DRAM↔CXL↔SSD↔GPU各路径P50/P99 | hetero_bench.cu E4 | ~500行 |
+| M090 | 热度驱动placement: access_heat→promote/demote决策 | hotness_tracker + online_learner | ~400行 |
+| M091 | 并发查询+后台迁移: 吞吐量衰减测量 | hetero_bench.cu E5 | ~400行 |
 
-### 第4位Claude: M083-M085 — 性能基准Benchmark
-
-| Milestone | 任务 | 预计行数 |
-|-----------|------|---------|
-| M083 | ART micro-benchmark: insert/search/iterate吞吐量, node利用率, 内存碎片报告 | ~500行 |
-| M084 | NeoGraph端到端bench: LDBC-style workload, 混合读写延迟分布, snapshot开销 | ~600行 |
-| M085 | 跨层benchmark: DRAM/CXL/SSD tier迁移延迟, tier选择策略效果, 热度追踪精度 | ~500行 |
-
-修改重点: 统计聚合器, histogram/CSV输出, 多seed置信区间
-
-**预计产出**: ~3文件, ~1600行
-
-### 第5位Claude: M086-M088 — 文档 + 代码质量
+### 第6位Claude: M092-M094 — 端到端集成
 
 | Milestone | 任务 | 预计行数 |
 |-----------|------|---------|
-| M086 | 全项目API文档: 每个public class的Doxygen注释, 模块依赖图(mermaid) | ~800行注释 |
-| M087 | 代码一致性: 命名约定统一(snake_case), include路径整理, dead code清理 | ~200行修改 |
-| M088 | README更新: 构建指南, 架构图, 模块说明, 实验复现步骤 | ~300行 |
-
-**预计产出**: 多文件修改, 净新增~1300行
-
-### 第6位Claude: M089-M091 — 最终集成 + 发布
-
-| Milestone | 任务 | 预计行数 |
-|-----------|------|---------|
-| M089 | 全平台编译验证: GCC12+/Clang15+/CUDA11.5+ warning-free | 修改 |
-| M090 | 依赖清单: third-party license, 版本固定, reproducible build脚本 | ~200行 |
-| M091 | Release: git tag, CHANGELOG, 迁移完成验证报告 | ~100行 |
-
-**预计产出**: ~2-3文件, ~300行
+| M092 | LDBC SNB workload端到端 | ~600行 |
+| M093 | 论文实验复现: Table/Figure自动化 | ~400行 |
+| M094 | Release: 编译验证 + CHANGELOG + 回归检测 | ~200行 |
 
 ---
 
