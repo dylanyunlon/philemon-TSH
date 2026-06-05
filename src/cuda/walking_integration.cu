@@ -1,48 +1,48 @@
 /**
- * walking_integration.cu \u2014 \u7aef\u5230\u7aef\u96c6\u6210: LDBC SNB workload + \u8bba\u6587\u5b9e\u9a8c\u590d\u73b0 + \u56de\u5f52\u68c0\u6d4b
+ * walking_integration.cu — 端到端集成: LDBC SNB workload + 论文实验复现 + 回归检测
  *
- * mv\u6765\u6e90\u4e0e\u7b97\u6cd5\u6539\u52a8\u5bf9\u7167:
+ * mv来源与算法改动对照:
  *
- *   ldbc_bench.cpp (477\u884c)
- *     KEEP: LDBCLoader\u8c03\u7528\u6a21\u5f0f, generate_synthetic_edges, test harness\u6846\u67b6
+ *   ldbc_bench.cpp (477行)
+ *     KEEP: LDBCLoader调用模式, generate_synthetic_edges, test harness框架
  *     KEEP: TierCostModel standalone test pattern, access_cost_ns, migration_cost_ns
- *     KEEP: degree-tier cross-check, tier_counts\u7edf\u8ba1
+ *     KEEP: degree-tier cross-check, tier_counts统计
  *     KEEP: test runner lambda (run(name, result))
- *     MOD:  \u4e32\u884c\u67e5\u8be2 \u2192 GPU batch\u67e5\u8be2 kern_ldbc_batch
+ *     MOD:  串行查询 → GPU batch查询 kern_ldbc_batch
  *     NEW:  LDBCQuery struct (IC/IS/BI types), batch executor
- *     NEW:  exp_ldbc_e2e(): \u5168LDBC SNB workload\u6a21\u62df, QPS/latency/tier\u547d\u4e2d\u7387
+ *     NEW:  exp_ldbc_e2e(): 全LDBC SNB workload模拟, QPS/latency/tier命中率
  *
- *   integration_bench.cpp (375\u884c)
- *     KEEP: BenchConfig struct, SyntheticGraph\u751f\u6210, Phase 1-4\u6846\u67b6
+ *   integration_bench.cpp (375行)
+ *     KEEP: BenchConfig struct, SyntheticGraph生成, Phase 1-4框架
  *     KEEP: TieredSnapshot distribution: top 20% HBM, 30% GDDR, 50% DRAM
  *     KEEP: Phase 2 algorithm pattern (BFS/PR/SSSP/WCC/TC)
  *     KEEP: Phase 3 QueryExecutor concurrent batch
- *     MOD:  CPU sequential execution \u2192 GPU batch pipeline
- *     NEW:  kern_ldbc_batch_dispatch: \u6309\u67e5\u8be2\u7c7b\u578bdispatch\u5230\u4e0d\u540ckernel path
+ *     MOD:  CPU sequential execution → GPU batch pipeline
+ *     NEW:  kern_ldbc_batch_dispatch: 按查询类型dispatch到不同kernel path
  *
- *   cross_tier_bench.cpp (501\u884c)
+ *   cross_tier_bench.cpp (501行)
  *     KEEP: MockSnapshot/MockGraphMethod graph backend
  *     KEEP: TestResult struct, print_separator, summary formatting
  *     KEEP: PHILE_BREAKPOINT/PHILE_INSPECT pattern
  *     KEEP: tier_perf tracking per algorithm
- *     MOD:  \u5355\u7b97\u6cd5test \u2192 \u591a\u7b97\u6cd5\u7aef\u5230\u7aefpipeline
+ *     MOD:  单算法test → 多算法端到端pipeline
  *
- *   benchmark_matrix.hpp (674\u884c)
+ *   benchmark_matrix.hpp (674行)
  *     KEEP: BenchResult structure (algorithm/dataset/tier/backend fields)
  *     KEEP: SampleStats::compute (mean/stddev/95%CI), WelchResult::test
  *     KEEP: export_json, export_markdown, print_summary
  *     KEEP: AlgorithmType/DatasetType/TierConfig/BackendType enums
- *     MOD:  \u5168\u7ec4\u5408\u77e9\u9635 \u2192 \u8bba\u6587Table 1-3\u805a\u7126
- *     NEW:  exp_paper_tables(): \u81ea\u52a8\u751f\u6210Table 1(tier\u53c2\u6570), Table 2(\u7b97\u6cd5\u5bf9\u6bd4), Table 3(scalability)
+ *     MOD:  全组合矩阵 → 论文Table 1-3聚焦
+ *     NEW:  exp_paper_tables(): 自动生成Table 1(tier参数), Table 2(算法对比), Table 3(scalability)
  *
- *   walking_gpu_tree.cu \u00a7debug (\u524d100\u884c)
+ *   walking_gpu_tree.cu §debug (前100行)
  *     KEEP: INSPECT/CHK/Timer/sep pattern, g_dbg/g_insp/g_pass/g_fail
  *     KEEP: WALKING_CUDA compile-mode dispatch, GPU_CHECK, CPU fallback
  *     KEEP: rss_kb() memory tracking
  *
  *   M074-M091 changelog:
- *     NEW:  print_changelog(): \u6253\u5370M074-M094\u6240\u6709\u91cc\u7a0b\u7891\u6458\u8981
- *     NEW:  exp_regression(): \u56de\u5f52\u68c0\u6d4b, \u8fd0\u884c\u6838\u5fc3\u7b97\u6cd5, CHK\u7ed3\u679c\u4e0ebaseline\u5bf9\u6bd4
+ *     NEW:  print_changelog(): 打印M074-M094所有里程碑摘要
+ *     NEW:  exp_regression(): 回归检测, 运行核心算法, CHK结果与baseline对比
  *
  * Build:
  *   GPU:  nvcc -std=c++17 -O2 -arch=sm_86 -DWALKING_CUDA=1 \
@@ -50,7 +50,7 @@
  *   CPU:  g++ -std=c++17 -O2 -pthread -DWALKING_CUDA=0 -x c++ \
  *              -o walking_integration walking_integration.cu
  *
- * Milestone: M092\u2013M094
+ * Milestone: M092–M094
  */
 
 #include <cstdio>
@@ -78,9 +78,9 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 // CUDA / CPU compile-mode dispatch
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 #ifndef WALKING_CUDA
   #ifdef __CUDACC__
     #define WALKING_CUDA 1
@@ -94,8 +94,7 @@
   #define GPU_CHECK(call) do { \
       cudaError_t e = (call); \
       if (e != cudaSuccess) { \
-          fprintf(stderr, "[CUDA\u00b7FATAL] %s:%d %s\
-", __FILE__, __LINE__, \
+          fprintf(stderr, "[CUDA·FATAL] %s:%d %s\n", __FILE__, __LINE__, \
                   cudaGetErrorString(e)); \
           exit(1); } } while(0)
 #else
@@ -109,60 +108,51 @@
   #define cudaDeviceSynchronize() ((void)0)
 #endif
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// Debug infra \u2014 KEEP from walking_gpu_tree.cu
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
+// Debug infra — KEEP from walking_gpu_tree.cu
+// ════════════════════════════════════════════════════════════════
 static int g_dbg = 2;
 static long rss_kb() { struct rusage r; getrusage(RUSAGE_SELF, &r); return r.ru_maxrss; }
 static uint64_t g_insp = 0, g_pass = 0, g_fail = 0;
 
 #define INSPECT(tag, ...) do { g_insp++; \
-    std::printf("[INSPECT\u00b7%04lu\u00b7%s] ", (unsigned long)g_insp, tag); \
-    std::printf(__VA_ARGS__); std::printf("  RSS=%ldKB\
-", rss_kb()); } while(0)
+    std::printf("[INSPECT·%04lu·%s] ", (unsigned long)g_insp, tag); \
+    std::printf(__VA_ARGS__); std::printf("  RSS=%ldKB\n", rss_kb()); } while(0)
 
 #define CHK(cond, tag, ...) do { if(cond){g_pass++;} else { g_fail++; \
-    std::printf("[FAIL\u00b7%s] ", tag); std::printf(__VA_ARGS__); std::printf("\
-"); }} while(0)
+    std::printf("[FAIL·%s] ", tag); std::printf(__VA_ARGS__); std::printf("\n"); }} while(0)
 
 struct Timer {
     const char* l; std::chrono::high_resolution_clock::time_point t0;
     Timer(const char* s) : l(s), t0(std::chrono::high_resolution_clock::now()) {
-        if (g_dbg >= 1) std::printf("[T\u00b7START] %s\
-", l);
+        if (g_dbg >= 1) std::printf("[T·START] %s\n", l);
     }
     double ms() const {
         return std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - t0).count() / 1000.0;
     }
-    ~Timer() { std::printf("[T\u00b7END]   %s \u2192 %.2f ms\
-", l, ms()); }
+    ~Timer() { std::printf("[T·END]   %s → %.2f ms\n", l, ms()); }
 };
 
 static void sep(const char* s) {
-    std::printf("\
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\
-  %s\
-"
-                "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\
-\
-", s);
+    std::printf("\n════════════════════════════════════════════════════\n  %s\n"
+                "════════════════════════════════════════════════════\n\n", s);
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 //   namespace walking::integration
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 namespace walking {
 namespace integration {
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a70  Shared data structures
+// ════════════════════════════════════════════════════════════════
+// §0  Shared data structures
 //     mv: ldbc_bench.cpp (TierHint, DegreeStats), integration_bench.cpp
 //         (BenchConfig, SyntheticGraph, TemporalEdge)
-//     KEEP: tier\u679a\u4e3e, \u56fe\u6570\u636e\u7ed3\u6784, \u914d\u7f6e\u7ed3\u6784
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//     KEEP: tier枚举, 图数据结构, 配置结构
+// ════════════════════════════════════════════════════════════════
 
-// [KEEP from ldbc_bench.cpp] Tier\u5206\u5c42\u5b9a\u4e49
+// [KEEP from ldbc_bench.cpp] Tier分层定义
 enum TierID : uint8_t {
     TIER_HBM  = 0,    // GPU HBM  (~3.35 TB/s, H100 80GB)
     TIER_GDDR = 1,    // GPU GDDR (~1.0 TB/s)
@@ -181,7 +171,7 @@ static const char* tier_id_name(TierID t) {
     }
 }
 
-// [KEEP from ldbc_bench.cpp] Tier\u53c2\u6570\u914d\u7f6e (\u8bba\u6587Table 1\u6570\u636e)
+// [KEEP from ldbc_bench.cpp] Tier参数配置 (论文Table 1数据)
 struct TierSpec {
     TierID   id;
     uint64_t capacity_gb;
@@ -190,8 +180,7 @@ struct TierSpec {
     double   write_latency_ns;
 
     void dump() const {
-        std::printf("    [%-4s] cap=%3luGB  bw=%7.1fGB/s  rlat=%7.0fns  wlat=%7.0fns\
-",
+        std::printf("    [%-4s] cap=%3luGB  bw=%7.1fGB/s  rlat=%7.0fns  wlat=%7.0fns\n",
                     tier_id_name(id),
                     (unsigned long)capacity_gb, bandwidth_gbps,
                     read_latency_ns, write_latency_ns);
@@ -224,13 +213,13 @@ struct IntegConfig {
     uint64_t seed         = 42;
 };
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a71  Mock Graph Backend + CSR
+// ════════════════════════════════════════════════════════════════
+// §1  Mock Graph Backend + CSR
 //     mv: cross_tier_bench.cpp MockSnapshot, integration_bench.cpp
 //     [KEEP] adjacency list, vertex_count, edge_count, edges(), degree()
 //     [KEEP] tier-based access tracking
 //     [MOD]  add CSR for GPU batch processing
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 
 // [KEEP from cross_tier_bench.cpp] Adjacency list graph
 struct AdjGraph {
@@ -243,7 +232,7 @@ struct AdjGraph {
     std::vector<uint32_t> csr_col_idx;
     std::vector<double>   csr_weights;
 
-    // [NEW] Tier assignment per vertex: vertex \u2192 tier
+    // [NEW] Tier assignment per vertex: vertex → tier
     std::vector<uint8_t> vertex_tier;
 
     void build(uint64_t nv, uint64_t ne, uint64_t seed) {
@@ -265,7 +254,7 @@ struct AdjGraph {
         n_edges = actual;
 
         // [KEEP from ldbc_bench.cpp] tier assignment by vertex ID ranges
-        // top 20% \u2192 HBM, next 30% \u2192 GDDR, rest 50% \u2192 DRAM
+        // top 20% → HBM, next 30% → GDDR, rest 50% → DRAM
         for (uint64_t v = 0; v < nv; v++) {
             if (v < nv / 5)          vertex_tier[v] = TIER_HBM;
             else if (v < nv / 2)     vertex_tier[v] = TIER_GDDR;
@@ -309,12 +298,12 @@ struct AdjGraph {
     }
 };
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a72  LDBC SNB Query Types + Batch Structure
+// ════════════════════════════════════════════════════════════════
+// §2  LDBC SNB Query Types + Batch Structure
 //     [NEW] LDBC Interactive Complex (IC), Interactive Short (IS),
 //           Business Intelligence (BI) query type definitions
 //     mv pattern: ldbc_bench.cpp test_ldbc_loader query dispatch
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 
 // [NEW] LDBC SNB query classification
 enum class LDBCQueryType : uint8_t {
@@ -398,14 +387,13 @@ struct LDBCBatch {
     }
 
     void dump() const {
-        std::printf("    [LDBCBatch] total=%zu IC=%zu IS=%zu BI=%zu\
-",
+        std::printf("    [LDBCBatch] total=%zu IC=%zu IS=%zu BI=%zu\n",
                     queries.size(), n_ic, n_is, n_bi);
     }
 };
 
 // [NEW] Generate LDBC-like workload with SNB query mix
-//   IC:IS:BI ratio \u2248 4:4:2 (SNB interactive benchmark typical)
+//   IC:IS:BI ratio ≈ 4:4:2 (SNB interactive benchmark typical)
 static LDBCBatch generate_ldbc_workload(uint64_t n_queries,
                                          uint64_t n_vertices,
                                          int time_range,
@@ -417,7 +405,7 @@ static LDBCBatch generate_ldbc_workload(uint64_t n_queries,
     std::mt19937_64 rng(seed);
     std::uniform_int_distribution<uint32_t> vdist(0, n_vertices - 1);
     std::uniform_int_distribution<int64_t>  tdist(0, time_range);
-    std::uniform_int_distribution<int>      type_dist(0, 9);  // 0-9 \u2192 maps to types
+    std::uniform_int_distribution<int>      type_dist(0, 9);  // 0-9 → maps to types
 
     // [NEW] SNB-like distribution: IC 40%, IS 40%, BI 20%
     for (uint64_t i = 0; i < n_queries; i++) {
@@ -464,12 +452,12 @@ static LDBCBatch generate_ldbc_workload(uint64_t n_queries,
     return batch;
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a73  GPU Batch Query Kernels
+// ════════════════════════════════════════════════════════════════
+// §3  GPU Batch Query Kernels
 //     [NEW] kern_ldbc_batch: parallel execution of N LDBC queries
-//     [MOD] from ldbc_bench.cpp serial query \u2192 GPU batch dispatch
+//     [MOD] from ldbc_bench.cpp serial query → GPU batch dispatch
 //     Pattern: each thread handles one query, accesses CSR graph
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 
 // [NEW] Per-query result structure (fixed-size for GPU)
 struct QueryResult {
@@ -490,13 +478,13 @@ struct FlatCSR {
     uint8_t*  vtier;        // [n_vertices] per-vertex tier
 };
 
-// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ────────────────────────────────────────────────────────────
 // kern_ldbc_batch: GPU kernel for batch LDBC query execution
 //   [NEW] Each thread processes one query from the batch
 //   IC queries: multi-hop BFS from start_vertex (depth 1-3)
 //   IS queries: point lookup or 1-hop enumerate
 //   BI queries: full scan with filter
-// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ────────────────────────────────────────────────────────────
 
 #if WALKING_CUDA
 __global__
@@ -645,11 +633,11 @@ static void cpu_ldbc_batch(const AdjGraph& g,
     }
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a74  GPU Batch Executor
+// ════════════════════════════════════════════════════════════════
+// §4  GPU Batch Executor
 //     [NEW] Manages GPU memory for CSR + queries + results
-//     [MOD] from ldbc_bench.cpp serial test \u2192 batch GPU pipeline
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//     [MOD] from ldbc_bench.cpp serial test → batch GPU pipeline
+// ════════════════════════════════════════════════════════════════
 
 struct BatchExecResult {
     double   total_time_ms;
@@ -662,17 +650,14 @@ struct BatchExecResult {
     uint32_t total_results;
 
     void dump(const char* label) const {
-        std::printf("    [%s] total=%.2fms QPS=%.0f avg_lat=%.1f\u03bcs "
-                    "P50=%.1f\u03bcs P99=%.1f\u03bcs\
-",
+        std::printf("    [%s] total=%.2fms QPS=%.0f avg_lat=%.1fμs "
+                    "P50=%.1fμs P99=%.1fμs\n",
                     label, total_time_ms, qps, avg_latency_us,
                     p50_latency_us, p99_latency_us);
-        std::printf("    [%s] edges_traversed=%lu results=%u\
-",
+        std::printf("    [%s] edges_traversed=%lu results=%u\n",
                     label, (unsigned long)total_edges_traversed,
                     total_results);
-        std::printf("    [%s] tier_hits: HBM=%lu GDDR=%lu DRAM=%lu SSD=%lu\
-",
+        std::printf("    [%s] tier_hits: HBM=%lu GDDR=%lu DRAM=%lu SSD=%lu\n",
                     label,
                     (unsigned long)tier_hits[0], (unsigned long)tier_hits[1],
                     (unsigned long)tier_hits[2], (unsigned long)tier_hits[3]);
@@ -690,7 +675,7 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
     std::vector<QueryResult> h_results(nq);
 
 #if WALKING_CUDA
-    // \u2500\u2500 Allocate device CSR \u2500\u2500
+    // ── Allocate device CSR ──
     FlatCSR d_csr;
     d_csr.n_vertices = g.n_vertices;
     d_csr.n_edges    = g.n_edges;
@@ -713,7 +698,7 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
                           g.n_vertices * sizeof(uint8_t),
                           cudaMemcpyHostToDevice));
 
-    // \u2500\u2500 Allocate device queries and results \u2500\u2500
+    // ── Allocate device queries and results ──
     LDBCQuery*   d_queries;
     QueryResult* d_results;
     GPU_CHECK(cudaMalloc(&d_queries, nq * sizeof(LDBCQuery)));
@@ -723,7 +708,7 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
                           nq * sizeof(LDBCQuery), cudaMemcpyHostToDevice));
     GPU_CHECK(cudaMemset(d_results, 0, nq * sizeof(QueryResult)));
 
-    // \u2500\u2500 Launch kernel \u2500\u2500
+    // ── Launch kernel ──
     int block = 256;
     int grid  = (nq + block - 1) / block;
 
@@ -735,11 +720,11 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
     auto t1 = std::chrono::high_resolution_clock::now();
     res.total_time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-    // \u2500\u2500 Copy results back \u2500\u2500
+    // ── Copy results back ──
     GPU_CHECK(cudaMemcpy(h_results.data(), d_results,
                           nq * sizeof(QueryResult), cudaMemcpyDeviceToHost));
 
-    // \u2500\u2500 Cleanup \u2500\u2500
+    // ── Cleanup ──
     GPU_CHECK(cudaFree(d_csr.row_ptr));
     GPU_CHECK(cudaFree(d_csr.col_idx));
     GPU_CHECK(cudaFree(d_csr.weights));
@@ -755,7 +740,7 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
     res.total_time_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
 
-    // \u2500\u2500 Aggregate results \u2500\u2500
+    // ── Aggregate results ──
     std::vector<double> per_query_lat_us(nq);
     double per_q_us = (res.total_time_ms * 1000.0) / nq;
 
@@ -778,13 +763,13 @@ static BatchExecResult execute_ldbc_batch_gpu(AdjGraph& g,
     return res;
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a75  CPU Baseline Algorithms for Cross-Validation
+// ════════════════════════════════════════════════════════════════
+// §5  CPU Baseline Algorithms for Cross-Validation
 //     mv: integration_bench.cpp Phase 2, cross_tier_bench.cpp Test 1-5
 //     [KEEP] BFS, PageRank, SSSP, WCC implementations
 //     [KEEP] tier access tracking pattern
 //     Used for M094 regression CHK: GPU batch results == CPU serial
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 
 // [KEEP from integration_bench.cpp] BFS baseline
 struct BFSResult {
@@ -847,8 +832,12 @@ static PRResult cpu_pagerank(const AdjGraph& g, int max_iter, double damping) {
 
     for (int iter = 0; iter < max_iter; iter++) {
         std::fill(new_scores.begin(), new_scores.end(), 0.0);
+        double dangling_sum = 0.0;
         for (uint64_t u = 0; u < N; u++) {
-            if (g.adj[u].empty()) continue;
+            if (g.adj[u].empty()) {
+                dangling_sum += res.scores[u];
+                continue;
+            }
             double contrib = res.scores[u] / g.adj[u].size();
             for (auto& [v, w] : g.adj[u]) {
                 new_scores[v] += contrib;
@@ -856,8 +845,9 @@ static PRResult cpu_pagerank(const AdjGraph& g, int max_iter, double damping) {
         }
 
         double residual = 0;
+        double dangling_contrib = dangling_sum / N;
         for (uint64_t v = 0; v < N; v++) {
-            new_scores[v] = (1.0 - damping) / N + damping * new_scores[v];
+            new_scores[v] = (1.0 - damping) / N + damping * (new_scores[v] + dangling_contrib);
             residual += std::abs(new_scores[v] - res.scores[v]);
         }
 
@@ -884,28 +874,45 @@ static WCCResult cpu_wcc(const AdjGraph& g) {
     Timer t("cpu_wcc");
     WCCResult res;
     uint64_t N = g.n_vertices;
-    res.component.assign(N, UINT32_MAX);
-    res.n_components = 0;
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
-    for (uint64_t v = 0; v < N; v++) {
-        if (res.component[v] != UINT32_MAX) continue;
-        // BFS from v
-        uint32_t label = (uint32_t)v;
-        std::queue<uint32_t> q;
-        q.push((uint32_t)v);
-        res.component[v] = label;
-        while (!q.empty()) {
-            uint32_t u = q.front(); q.pop();
-            for (auto& [nb, w] : g.adj[u]) {
-                if (res.component[nb] == UINT32_MAX) {
-                    res.component[nb] = label;
-                    q.push(nb);
-                }
-            }
+    // Union-Find for weakly connected components (treats edges as undirected)
+    std::vector<uint32_t> parent(N), rank_uf(N, 0);
+    for (uint64_t i = 0; i < N; i++) parent[i] = (uint32_t)i;
+
+    std::function<uint32_t(uint32_t)> find = [&](uint32_t x) -> uint32_t {
+        while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+        return x;
+    };
+    auto unite = [&](uint32_t a, uint32_t b) {
+        a = find(a); b = find(b);
+        if (a == b) return;
+        if (rank_uf[a] < rank_uf[b]) std::swap(a, b);
+        parent[b] = a;
+        if (rank_uf[a] == rank_uf[b]) rank_uf[a]++;
+    };
+
+    for (uint64_t u = 0; u < N; u++) {
+        for (auto& [v, w] : g.adj[u]) {
+            unite((uint32_t)u, v);
         }
-        res.n_components++;
+    }
+
+    // Count components and assign labels
+    res.component.resize(N);
+    std::unordered_map<uint32_t, uint32_t> root_to_label;
+    res.n_components = 0;
+    for (uint64_t v = 0; v < N; v++) {
+        uint32_t r = find((uint32_t)v);
+        auto it = root_to_label.find(r);
+        if (it == root_to_label.end()) {
+            root_to_label[r] = res.n_components;
+            res.component[v] = res.n_components;
+            res.n_components++;
+        } else {
+            res.component[v] = it->second;
+        }
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -955,12 +962,12 @@ static SSSPResult cpu_sssp(const AdjGraph& g, uint32_t src) {
     return res;
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// \u00a76  Throughput/Latency Statistics
+// ════════════════════════════════════════════════════════════════
+// §6  Throughput/Latency Statistics
 //     mv: benchmark_matrix.hpp SampleStats, WelchResult
 //     [KEEP] mean/stddev/95%CI computation
 //     [KEEP] Welch t-test for significance testing
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════
 
 struct SampleStats {
     double mean;
@@ -997,22 +1004,21 @@ struct SampleStats {
     }
 
     void dump(const char* label) const {
-        std::printf("    %-20s mean=%.3f \u00b1 %.3f  [%.3f, %.3f]  n=%zu\
-",
+        std::printf("    %-20s mean=%.3f ± %.3f  [%.3f, %.3f]  n=%zu\n",
                     label, mean, stddev, ci_lo, ci_hi, n);
     }
 };
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 //
-//   M092: LDBC SNB Workload \u7aef\u5230\u7aef
+//   M092: LDBC SNB Workload 端到端
 //
-//   mv\u9aa8\u67b6: ldbc_bench.cpp + integration_bench.cpp
+//   mv骨架: ldbc_bench.cpp + integration_bench.cpp
 //   [KEEP 80%] LDBC query patterns, graph loading, throughput stats
-//   [MOD  20%] serial \u2192 GPU batch, QPS/latency/tier tracking
+//   [MOD  20%] serial → GPU batch, QPS/latency/tier tracking
 //   [NEW] exp_ldbc_e2e(): full LDBC SNB workload simulation
 //
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 
 static void exp_ldbc_e2e() {
     sep("M092: LDBC SNB Workload End-to-End");
@@ -1027,14 +1033,12 @@ static void exp_ldbc_e2e() {
     cfg.time_range   = 1000000;
     cfg.seed         = 42;
 
-    // \u2500\u2500 Phase 1: Build graph \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("  Phase 1: Graph Construction\
-");
+    // ── Phase 1: Build graph ──────────────────────────────────
+    std::printf("  Phase 1: Graph Construction\n");
     AdjGraph graph;
     graph.build(cfg.num_vertices, cfg.num_edges, cfg.seed);
 
-    std::printf("    V=%lu E=%lu CSR_nnz=%lu\
-",
+    std::printf("    V=%lu E=%lu CSR_nnz=%lu\n",
                 (unsigned long)graph.n_vertices,
                 (unsigned long)graph.n_edges,
                 (unsigned long)graph.csr_col_idx.size());
@@ -1052,10 +1056,8 @@ static void exp_ldbc_e2e() {
         "CSR nnz=%lu != n_edges=%lu",
         (unsigned long)csr_nnz, (unsigned long)graph.n_edges);
 
-    // \u2500\u2500 Phase 2: Generate LDBC workload \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 2: LDBC Workload Generation\
-");
+    // ── Phase 2: Generate LDBC workload ──────────────────────
+    std::printf("\n  Phase 2: LDBC Workload Generation\n");
     LDBCBatch batch = generate_ldbc_workload(
         cfg.num_queries, cfg.num_vertices, cfg.time_range, cfg.seed + 1);
 
@@ -1070,14 +1072,11 @@ static void exp_ldbc_e2e() {
     double ic_pct = 100.0 * batch.n_ic / cfg.num_queries;
     double is_pct = 100.0 * batch.n_is / cfg.num_queries;
     double bi_pct = 100.0 * batch.n_bi / cfg.num_queries;
-    std::printf("    Mix: IC=%.1f%% IS=%.1f%% BI=%.1f%%\
-",
+    std::printf("    Mix: IC=%.1f%% IS=%.1f%% BI=%.1f%%\n",
                 ic_pct, is_pct, bi_pct);
 
-    // \u2500\u2500 Phase 3: CPU Serial Baseline \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 3: CPU Serial Baseline\
-");
+    // ── Phase 3: CPU Serial Baseline ──────────────────────────
+    std::printf("\n  Phase 3: CPU Serial Baseline\n");
     std::vector<QueryResult> cpu_results(cfg.num_queries);
 
     auto t0_cpu = std::chrono::high_resolution_clock::now();
@@ -1087,29 +1086,23 @@ static void exp_ldbc_e2e() {
     double cpu_ms = std::chrono::duration<double, std::milli>(t1_cpu - t0_cpu).count();
 
     double cpu_qps = cfg.num_queries / (cpu_ms / 1000.0);
-    std::printf("    CPU serial: %.2f ms, QPS=%.0f\
-", cpu_ms, cpu_qps);
+    std::printf("    CPU serial: %.2f ms, QPS=%.0f\n", cpu_ms, cpu_qps);
 
     uint64_t cpu_total_edges = 0, cpu_total_results = 0;
     for (uint32_t i = 0; i < cfg.num_queries; i++) {
         cpu_total_edges += cpu_results[i].edges_traversed;
         cpu_total_results += cpu_results[i].result_count;
     }
-    std::printf("    CPU total_edges=%lu total_results=%lu\
-",
+    std::printf("    CPU total_edges=%lu total_results=%lu\n",
                 (unsigned long)cpu_total_edges, (unsigned long)cpu_total_results);
 
-    // \u2500\u2500 Phase 4: GPU Batch Execution \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 4: GPU Batch Execution\
-");
+    // ── Phase 4: GPU Batch Execution ──────────────────────────
+    std::printf("\n  Phase 4: GPU Batch Execution\n");
     BatchExecResult gpu_res = execute_ldbc_batch_gpu(graph, batch);
     gpu_res.dump("GPU_BATCH");
 
-    // \u2500\u2500 Phase 5: Cross-validation CPU vs GPU \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 5: CPU\u2194GPU Cross-Validation\
-");
+    // ── Phase 5: Cross-validation CPU vs GPU ──────────────────
+    std::printf("\n  Phase 5: CPU↔GPU Cross-Validation\n");
 
     CHK(gpu_res.total_edges_traversed == cpu_total_edges, "M092_XVAL_EDGES",
         "GPU edges=%lu != CPU edges=%lu",
@@ -1125,10 +1118,8 @@ static void exp_ldbc_e2e() {
             (unsigned long)cpu_total_edges,
             (gpu_res.total_edges_traversed == cpu_total_edges) ? "YES" : "NO");
 
-    // \u2500\u2500 Phase 6: Multi-run throughput measurement \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 6: Multi-run Throughput (5 runs)\
-");
+    // ── Phase 6: Multi-run throughput measurement ─────────────
+    std::printf("\n  Phase 6: Multi-run Throughput (5 runs)\n");
     const int N_RUNS = 5;
     std::vector<double> qps_samples;
     qps_samples.reserve(N_RUNS);
@@ -1136,18 +1127,15 @@ static void exp_ldbc_e2e() {
     for (int run = 0; run < N_RUNS; run++) {
         BatchExecResult r = execute_ldbc_batch_gpu(graph, batch);
         qps_samples.push_back(r.qps);
-        std::printf("    run[%d] = %.0f QPS (%.2f ms)\
-",
+        std::printf("    run[%d] = %.0f QPS (%.2f ms)\n",
                     run, r.qps, r.total_time_ms);
     }
 
     SampleStats qps_stats = SampleStats::compute(qps_samples);
     qps_stats.dump("QPS");
 
-    // \u2500\u2500 Phase 7: Per-category breakdown \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 7: Per-Category Latency Breakdown\
-");
+    // ── Phase 7: Per-category breakdown ──────────────────────
+    std::printf("\n  Phase 7: Per-Category Latency Breakdown\n");
 
     // Compute edges traversed per category
     uint64_t ic_edges = 0, is_edges = 0, bi_edges = 0;
@@ -1170,28 +1158,22 @@ static void exp_ldbc_e2e() {
         }
     }
 
-    std::printf("    IC: queries=%u avg_edges=%.1f\
-",
+    std::printf("    IC: queries=%u avg_edges=%.1f\n",
                 ic_count, ic_count > 0 ? (double)ic_edges / ic_count : 0);
-    std::printf("    IS: queries=%u avg_edges=%.1f\
-",
+    std::printf("    IS: queries=%u avg_edges=%.1f\n",
                 is_count, is_count > 0 ? (double)is_edges / is_count : 0);
-    std::printf("    BI: queries=%u avg_edges=%.1f\
-",
+    std::printf("    BI: queries=%u avg_edges=%.1f\n",
                 bi_count, bi_count > 0 ? (double)bi_edges / bi_count : 0);
 
-    // \u2500\u2500 Phase 8: Tier hit rate analysis \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("\
-  Phase 8: Tier Hit Rate Analysis\
-");
+    // ── Phase 8: Tier hit rate analysis ──────────────────────
+    std::printf("\n  Phase 8: Tier Hit Rate Analysis\n");
     uint64_t tier_total = 0;
     for (int t = 0; t < TIER_COUNT; t++) tier_total += gpu_res.tier_hits[t];
 
     if (tier_total > 0) {
         for (int t = 0; t < TIER_COUNT; t++) {
             double pct = 100.0 * gpu_res.tier_hits[t] / tier_total;
-            std::printf("    %s: %lu (%.1f%%)\
-",
+            std::printf("    %s: %lu (%.1f%%)\n",
                         tier_id_name(static_cast<TierID>(t)),
                         (unsigned long)gpu_res.tier_hits[t], pct);
         }
@@ -1205,22 +1187,20 @@ static void exp_ldbc_e2e() {
             qps_stats.mean, qps_stats.ci_lo, qps_stats.ci_hi,
             (unsigned long)gpu_res.total_edges_traversed);
 
-    std::printf("\
-  \u2713 M092 LDBC SNB workload complete.\
-");
+    std::printf("\n  ✓ M092 LDBC SNB workload complete.\n");
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 //
-//   M093: \u8bba\u6587\u5b9e\u9a8c\u590d\u73b0 \u2014 Table/Figure \u81ea\u52a8\u5316
+//   M093: 论文实验复现 — Table/Figure 自动化
 //
-//   mv\u9aa8\u67b6: benchmark_matrix.hpp (BenchResult, formatTable, CSV export)
+//   mv骨架: benchmark_matrix.hpp (BenchResult, formatTable, CSV export)
 //   [KEEP 80%] result structure, table formatting, export utilities
-//   [MOD  20%] \u5168\u7ec4\u5408\u77e9\u9635 \u2192 \u8bba\u6587\u805a\u7126Tables
-//   [NEW] exp_paper_tables(): Table 1 (tier\u53c2\u6570), Table 2 (\u7b97\u6cd5\u5bf9\u6bd4),
-//         Table 3 (scalability), CSV\u5bfc\u51fa
+//   [MOD  20%] 全组合矩阵 → 论文聚焦Tables
+//   [NEW] exp_paper_tables(): Table 1 (tier参数), Table 2 (算法对比),
+//         Table 3 (scalability), CSV导出
 //
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 
 // [KEEP from benchmark_matrix.hpp] Algorithm and dataset enums
 enum class PaperAlgo : uint8_t {
@@ -1284,24 +1264,18 @@ struct PaperBenchResult {
     }
 };
 
-// \u2500\u2500 Table 1: Tier Capacity/Bandwidth/Latency \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Table 1: Tier Capacity/Bandwidth/Latency ──────────────────
 
 static void generate_table1() {
-    std::printf("  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\
-");
-    std::printf("  \u2502  Table 1: Memory Tier Specifications                            \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
-    std::printf("  \u2502 Tier     \u2502 Capacity   \u2502 Bandwidth      \u2502 Read Lat  \u2502 Write Lat  \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
+    std::printf("  ┌─────────────────────────────────────────────────────────────────┐\n");
+    std::printf("  │  Table 1: Memory Tier Specifications                            │\n");
+    std::printf("  ├──────────┬────────────┬────────────────┬───────────┬────────────┤\n");
+    std::printf("  │ Tier     │ Capacity   │ Bandwidth      │ Read Lat  │ Write Lat  │\n");
+    std::printf("  ├──────────┼────────────┼────────────────┼───────────┼────────────┤\n");
 
     for (int t = 0; t < TIER_COUNT; t++) {
         const TierSpec& s = default_tier_specs[t];
-        std::printf("  \u2502 %-8s \u2502 %5lu GB   \u2502 %8.1f GB/s   \u2502 %6.0f ns \u2502 %6.0f ns  \u2502\
-",
+        std::printf("  │ %-8s │ %5lu GB   │ %8.1f GB/s   │ %6.0f ns │ %6.0f ns  │\n",
                     tier_id_name(s.id),
                     (unsigned long)s.capacity_gb,
                     s.bandwidth_gbps,
@@ -1309,8 +1283,7 @@ static void generate_table1() {
                     s.write_latency_ns);
     }
 
-    std::printf("  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\
-");
+    std::printf("  └──────────┴────────────┴────────────────┴───────────┴────────────┘\n");
 
     // Validation
     for (int t = 0; t < TIER_COUNT - 1; t++) {
@@ -1329,20 +1302,14 @@ static void generate_table1() {
     INSPECT("TABLE1", "generated tier specs for %d tiers", TIER_COUNT);
 }
 
-// \u2500\u2500 Table 2: Algorithm Performance Comparison \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Table 2: Algorithm Performance Comparison ────────────────
 
 static void generate_table2() {
-    std::printf("\
-  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\
-");
-    std::printf("  \u2502  Table 2: Algorithm Performance (Simulated)                            \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
-    std::printf("  \u2502 Algorithm \u2502 Dataset     \u2502 Latency ms \u2502 Throughput   \u2502 Output           \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
+    std::printf("\n  ┌───────────────────────────────────────────────────────────────────────┐\n");
+    std::printf("  │  Table 2: Algorithm Performance (Simulated)                            │\n");
+    std::printf("  ├───────────┬─────────────┬────────────┬──────────────┬──────────────────┤\n");
+    std::printf("  │ Algorithm │ Dataset     │ Latency ms │ Throughput   │ Output           │\n");
+    std::printf("  ├───────────┼─────────────┼────────────┼──────────────┼──────────────────┤\n");
 
     std::vector<PaperBenchResult> results;
 
@@ -1375,8 +1342,7 @@ static void generate_table2() {
             br.algo_output = r.visited;
             results.push_back(br);
 
-            std::printf("  \u2502 %-9s \u2502 %-11s \u2502 %10.3f \u2502 %10.0f/s \u2502 visited=%lu     \u2502\
-",
+            std::printf("  │ %-9s │ %-11s │ %10.3f │ %10.0f/s │ visited=%lu     │\n",
                         "BFS", paper_dataset_name(ds), r.time_ms,
                         br.throughput_eps, (unsigned long)r.visited);
         }
@@ -1394,8 +1360,7 @@ static void generate_table2() {
             br.algo_output = r.iterations;
             results.push_back(br);
 
-            std::printf("  \u2502 %-9s \u2502 %-11s \u2502 %10.3f \u2502 %10.0f/s \u2502 iters=%d        \u2502\
-",
+            std::printf("  │ %-9s │ %-11s │ %10.3f │ %10.0f/s │ iters=%d        │\n",
                         "PageRank", paper_dataset_name(ds), r.time_ms,
                         br.throughput_eps, r.iterations);
         }
@@ -1413,8 +1378,7 @@ static void generate_table2() {
             br.algo_output = r.relaxed;
             results.push_back(br);
 
-            std::printf("  \u2502 %-9s \u2502 %-11s \u2502 %10.3f \u2502 %10.0f/s \u2502 relaxed=%lu     \u2502\
-",
+            std::printf("  │ %-9s │ %-11s │ %10.3f │ %10.0f/s │ relaxed=%lu     │\n",
                         "SSSP", paper_dataset_name(ds), r.time_ms,
                         br.throughput_eps, (unsigned long)r.relaxed);
         }
@@ -1432,15 +1396,13 @@ static void generate_table2() {
             br.algo_output = r.n_components;
             results.push_back(br);
 
-            std::printf("  \u2502 %-9s \u2502 %-11s \u2502 %10.3f \u2502 %10.0f/s \u2502 comps=%u        \u2502\
-",
+            std::printf("  │ %-9s │ %-11s │ %10.3f │ %10.0f/s │ comps=%u        │\n",
                         "WCC", paper_dataset_name(ds), r.time_ms,
                         br.throughput_eps, r.n_components);
         }
     }
 
-    std::printf("  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\
-");
+    std::printf("  └───────────┴─────────────┴────────────┴──────────────┴──────────────────┘\n");
 
     // Validate: BFS should be faster than PageRank (for same dataset)
     for (size_t i = 0; i + 3 < results.size(); i += 4) {
@@ -1457,31 +1419,21 @@ static void generate_table2() {
     INSPECT("TABLE2", "generated %zu benchmark results", results.size());
 
     // Export CSV
-    std::printf("\
-  CSV export:\
-");
-    std::printf("  algo,dataset,tier,latency_ms,throughput_eps,nv,ne,output\
-");
+    std::printf("\n  CSV export:\n");
+    std::printf("  algo,dataset,tier,latency_ms,throughput_eps,nv,ne,output\n");
     for (auto& r : results) {
-        std::printf("  %s\
-", r.to_csv_row().c_str());
+        std::printf("  %s\n", r.to_csv_row().c_str());
     }
 }
 
-// \u2500\u2500 Table 3: Scalability \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Table 3: Scalability ──────────────────────────────────────
 
 static void generate_table3() {
-    std::printf("\
-  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\
-");
-    std::printf("  \u2502  Table 3: Scalability (BFS + PageRank, varying graph size)     \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
-    std::printf("  \u2502 V          \u2502 E            \u2502 BFS (ms)     \u2502 PageRank (ms)        \u2502\
-");
-    std::printf("  \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\
-");
+    std::printf("\n  ┌───────────────────────────────────────────────────────────────┐\n");
+    std::printf("  │  Table 3: Scalability (BFS + PageRank, varying graph size)     │\n");
+    std::printf("  ├────────────┬──────────────┬──────────────┬──────────────────────┤\n");
+    std::printf("  │ V          │ E            │ BFS (ms)     │ PageRank (ms)        │\n");
+    std::printf("  ├────────────┼──────────────┼──────────────┼──────────────────────┤\n");
 
     struct ScalePoint {
         uint64_t nv, ne;
@@ -1510,14 +1462,12 @@ static void generate_table3() {
         sp.pr_eps  = ne * pr.iterations / (pr.time_ms / 1000.0);
         points.push_back(sp);
 
-        std::printf("  \u2502 %10lu \u2502 %12lu \u2502 %12.3f \u2502 %12.3f          \u2502\
-",
+        std::printf("  │ %10lu │ %12lu │ %12.3f │ %12.3f          │\n",
                     (unsigned long)nv, (unsigned long)ne,
                     bfs.time_ms, pr.time_ms);
     }
 
-    std::printf("  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\
-");
+    std::printf("  └────────────┴──────────────┴──────────────┴──────────────────────┘\n");
 
     // Validate scalability: larger graphs should take more time
     for (size_t i = 1; i < points.size(); i++) {
@@ -1525,7 +1475,7 @@ static void generate_table3() {
         if (points[i].nv >= points[i - 1].nv * 2) {
             double bfs_ratio = points[i].bfs_ms / std::max(points[i - 1].bfs_ms, 0.001);
             CHK(bfs_ratio < 50.0, "TABLE3_SCALE",
-                "BFS scaling: %lu\u2192%lu, time ratio %.1fx (expected <50x)",
+                "BFS scaling: %lu→%lu, time ratio %.1fx (expected <50x)",
                 (unsigned long)points[i - 1].nv, (unsigned long)points[i].nv,
                 bfs_ratio);
         }
@@ -1535,14 +1485,10 @@ static void generate_table3() {
         "expected 5 scale points, got %zu", points.size());
 
     // Print throughput scaling
-    std::printf("\
-  Throughput scaling:\
-");
-    std::printf("  %-10s %-15s %-15s\
-", "V", "BFS (eps)", "PR (eps)");
+    std::printf("\n  Throughput scaling:\n");
+    std::printf("  %-10s %-15s %-15s\n", "V", "BFS (eps)", "PR (eps)");
     for (auto& sp : points) {
-        std::printf("  %-10lu %-15.0f %-15.0f\
-",
+        std::printf("  %-10lu %-15.0f %-15.0f\n",
                     (unsigned long)sp.nv, sp.bfs_eps, sp.pr_eps);
     }
 
@@ -1563,21 +1509,19 @@ static void exp_paper_tables() {
     // Table 3: Scalability
     generate_table3();
 
-    std::printf("\
-  \u2713 M093 paper tables generated.\
-");
+    std::printf("\n  ✓ M093 paper tables generated.\n");
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 //
-//   M094: Release \u2014 \u7f16\u8bd1\u9a8c\u8bc1 + CHANGELOG + \u56de\u5f52\u68c0\u6d4b
+//   M094: Release — 编译验证 + CHANGELOG + 回归检测
 //
-//   [NEW] exp_regression(): \u56de\u5f52\u68c0\u6d4b, \u8fd0\u884c\u6838\u5fc3\u7b97\u6cd5, CHK vs baseline
-//   [NEW] print_changelog(): M074-M094\u5168\u91cc\u7a0b\u7891\u6458\u8981
+//   [NEW] exp_regression(): 回归检测, 运行核心算法, CHK vs baseline
+//   [NEW] print_changelog(): M074-M094全里程碑摘要
 //
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ════════════════════════════════════════════════════════════════════════
 
-// \u2500\u2500 Regression Detection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Regression Detection ─────────────────────────────────────
 
 // [NEW] Regression baseline values (from M074-M091 experiments)
 struct RegressionBaseline {
@@ -1599,9 +1543,8 @@ static void exp_regression() {
     AdjGraph g;
     g.build(ref_nv, ref_ne, ref_seed);
 
-    // \u2500\u2500 Test 1: BFS correctness \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("  Regression Test 1: BFS Correctness\
-");
+    // ── Test 1: BFS correctness ──────────────────────────────
+    std::printf("  Regression Test 1: BFS Correctness\n");
     {
         auto r = cpu_bfs(g, 0);
         CHK(r.visited > 0, "REG_BFS_VISITED", "BFS should visit >0 vertices");
@@ -1621,16 +1564,14 @@ static void exp_regression() {
             "counted=%lu != reported=%lu",
             (unsigned long)counted_visited, (unsigned long)r.visited);
 
-        std::printf("    BFS: visited=%lu edges=%lu time=%.3fms \u2713\
-",
+        std::printf("    BFS: visited=%lu edges=%lu time=%.3fms ✓\n",
                     (unsigned long)r.visited,
                     (unsigned long)r.edges_traversed,
                     r.time_ms);
     }
 
-    // \u2500\u2500 Test 2: PageRank convergence \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    std::printf("  Regression Test 2: PageRank Convergence\
-");
+    // ── Test 2: PageRank convergence ─────────────────────────
+    std::printf("  Regression Test 2: PageRank Convergence\n");
     {
         auto r = cpu_pagerank(g, 20, 0.85);
 
@@ -1650,72 +1591,333 @@ static void exp_regression() {
         }
         CHK(all_positive, "REG_PR_POS", "all PR scores should be >= 0");
 
-        std::printf("[REG·PR] sum=%.6f residual=%.6f iters=%d OK\n",
-                sum, r.residual, r.iterations);
+        std::printf("    PR: sum=%.6f residual=%.6e iters=%d time=%.3fms ✓\n",
+                    sum, r.residual, r.iterations, r.time_ms);
     }
 
-    // ── 4. SSSP regression ──
+    // ── Test 3: WCC correctness ──────────────────────────────
+    std::printf("  Regression Test 3: WCC Correctness\n");
+    {
+        auto r = cpu_wcc(g);
+        CHK(r.n_components > 0, "REG_WCC_COMPS",
+            "WCC should find >0 components");
+        CHK(r.n_components <= ref_nv, "REG_WCC_BOUNDS",
+            "WCC components=%u > V=%lu",
+            r.n_components, (unsigned long)ref_nv);
+
+        // All vertices should be assigned a component
+        bool all_assigned = true;
+        for (uint64_t v = 0; v < ref_nv; v++) {
+            if (r.component[v] == UINT32_MAX) {
+                all_assigned = false;
+                break;
+            }
+        }
+        CHK(all_assigned, "REG_WCC_ASSIGN",
+            "all vertices should have a component label");
+
+        // Cross-validate: edges within same component
+        uint64_t cross_comp_edges = 0;
+        for (uint64_t u = 0; u < ref_nv; u++) {
+            for (auto& [v, w] : g.adj[u]) {
+                if (r.component[u] != r.component[v]) {
+                    cross_comp_edges++;
+                }
+            }
+        }
+        CHK(cross_comp_edges == 0, "REG_WCC_XCOMP",
+            "found %lu cross-component edges (should be 0)",
+            (unsigned long)cross_comp_edges);
+
+        std::printf("    WCC: components=%u cross_comp_edges=%lu time=%.3fms ✓\n",
+                    r.n_components, (unsigned long)cross_comp_edges, r.time_ms);
+    }
+
+    // ── Test 4: SSSP correctness ─────────────────────────────
+    std::printf("  Regression Test 4: SSSP Correctness\n");
     {
         auto r = cpu_sssp(g, 0);
-        CHK(r.dist[0] == 0.0, "REG_SSSP_SRC", "source dist should be 0");
-        uint32_t reachable = 0;
-        for (auto d : r.dist) if (d < 1e17) reachable++;
-        CHK(reachable > 0, "REG_SSSP_REACH", "at least source is reachable");
-        std::printf("[REG·SSSP] reachable=%u/%lu from src=0 OK\n",
-                reachable, (unsigned long)r.dist.size());
+        CHK(r.dist[0] == 0.0, "REG_SSSP_SRC", "SSSP dist[src] should be 0");
+        CHK(r.relaxed > 0, "REG_SSSP_RELAX", "SSSP should relax >0 edges");
+
+        // All distances should be non-negative
+        bool all_nonneg = true;
+        for (uint64_t v = 0; v < ref_nv; v++) {
+            if (r.dist[v] < 0 && r.dist[v] < 1e17) {
+                all_nonneg = false;
+                break;
+            }
+        }
+        CHK(all_nonneg, "REG_SSSP_NONNEG",
+            "all SSSP distances should be >= 0 (or infinity)");
+
+        // Triangle inequality check on a sample of edges
+        uint64_t violations = 0;
+        for (uint64_t u = 0; u < ref_nv; u++) {
+            if (r.dist[u] >= 1e17) continue;
+            for (auto& [v, w] : g.adj[u]) {
+                if (r.dist[v] > r.dist[u] + w + 1e-9) {
+                    violations++;
+                }
+            }
+        }
+        CHK(violations == 0, "REG_SSSP_TRIANGLE",
+            "found %lu triangle inequality violations",
+            (unsigned long)violations);
+
+        std::printf("    SSSP: relaxed=%lu violations=%lu time=%.3fms ✓\n",
+                    (unsigned long)r.relaxed,
+                    (unsigned long)violations, r.time_ms);
     }
 
-    // ── 5. Changelog ──
-    sep("CHANGELOG: M074-M094");
-    std::printf("M074-M076: Driver workloads + real-scale experiment (2503 lines)\n");
-    std::printf("M077-M079: LLM4Walking + GPU tree traversal (3830 lines)\n");
-    std::printf("M080-M082: Warp-cooperative find_child + merge-path + multi-GPU (1603 lines)\n");
-    std::printf("M083-M085: TemGraph GPU temporal queries: CSR + range + walk (1745 lines)\n");
-    std::printf("M086-M088: NeoTree GPU MVCC: version chain + snapshot + GC (1686 lines)\n");
-    std::printf("M089-M091: Cross-tier benchmark + heat-driven placement (1386 lines)\n");
-    std::printf("M092-M094: End-to-end integration + paper tables + regression (~1700 lines)\n");
-    std::printf("Total new code: ~14,453 lines across 7 .cu files\n");
+    // ── Test 5: LDBC batch GPU↔CPU consistency ───────────────
+    std::printf("  Regression Test 5: LDBC Batch Consistency\n");
+    {
+        LDBCBatch batch = generate_ldbc_workload(1000, ref_nv, 100000, 99);
 
-    INSPECT("M094_DONE", "regression tests complete  RSS=%ldKB", rss_kb());
+        std::vector<QueryResult> cpu_results(1000);
+        cpu_ldbc_batch(g, batch.queries.data(), cpu_results.data(), 1000);
+
+        BatchExecResult gpu_res = execute_ldbc_batch_gpu(g, batch);
+
+        uint64_t cpu_edges_total = 0, cpu_result_total = 0;
+        for (int i = 0; i < 1000; i++) {
+            cpu_edges_total += cpu_results[i].edges_traversed;
+            cpu_result_total += cpu_results[i].result_count;
+        }
+
+        CHK(gpu_res.total_edges_traversed == cpu_edges_total, "REG_BATCH_EDGES",
+            "GPU edges=%lu != CPU edges=%lu",
+            (unsigned long)gpu_res.total_edges_traversed,
+            (unsigned long)cpu_edges_total);
+        CHK(gpu_res.total_results == cpu_result_total, "REG_BATCH_RESULTS",
+            "GPU results=%u != CPU results=%lu",
+            gpu_res.total_results, (unsigned long)cpu_result_total);
+
+        std::printf("    LDBC batch: 1000 queries, GPU==CPU edges=%lu results=%lu ✓\n",
+                    (unsigned long)cpu_edges_total,
+                    (unsigned long)cpu_result_total);
+    }
+
+    // ── Test 6: CSR integrity ────────────────────────────────
+    std::printf("  Regression Test 6: CSR Integrity\n");
+    {
+        // row_ptr monotonicity
+        bool monotonic = true;
+        for (uint64_t v = 0; v < ref_nv; v++) {
+            if (g.csr_row_ptr[v + 1] < g.csr_row_ptr[v]) {
+                monotonic = false;
+                break;
+            }
+        }
+        CHK(monotonic, "REG_CSR_MONO", "CSR row_ptr should be monotonic");
+
+        // Total nnz matches
+        CHK(g.csr_row_ptr[ref_nv] == g.n_edges, "REG_CSR_NNZ",
+            "CSR nnz=%lu != n_edges=%lu",
+            (unsigned long)g.csr_row_ptr[ref_nv],
+            (unsigned long)g.n_edges);
+
+        // col_idx bounds check
+        bool all_in_bounds = true;
+        for (uint64_t e = 0; e < g.n_edges; e++) {
+            if (g.csr_col_idx[e] >= ref_nv) {
+                all_in_bounds = false;
+                break;
+            }
+        }
+        CHK(all_in_bounds, "REG_CSR_BOUNDS",
+            "all col_idx should be < n_vertices");
+
+        std::printf("    CSR: monotonic=%s nnz=%lu in_bounds=%s ✓\n",
+                    monotonic ? "yes" : "NO",
+                    (unsigned long)g.csr_row_ptr[ref_nv],
+                    all_in_bounds ? "yes" : "NO");
+    }
+
+    INSPECT("M094_REG_DONE", "regression tests complete: pass=%lu fail=%lu",
+            (unsigned long)g_pass, (unsigned long)g_fail);
+
+    std::printf("\n  ✓ M094 regression detection complete.\n");
+}
+
+// ── CHANGELOG ────────────────────────────────────────────────
+
+static void print_changelog() {
+    sep("M094: CHANGELOG (M074-M094)");
+
+    struct MilestoneEntry {
+        const char* id;
+        const char* title;
+        const char* files;
+        int         lines;
+        const char* highlight;
+    };
+
+    static const MilestoneEntry changelog[] = {
+        { "M074", "Driver workloads补全",
+          "philemon_driver_workloads.hpp", 416,
+          "initialize_graph, execute_insert_delete, execute_batch_insert" },
+        { "M075", "Driver算法委托",
+          "philemon_driver_algo_delegates.hpp", 317,
+          "bfs/sssp/wcc/page_rank snapshot委托, UnionFind按秩合并" },
+        { "M076", "真实数据集实验",
+          "philemon_realscale_experiment.cpp + philemon_experiment.cpp", 1616,
+          "LiveJournal 69M边全量验证, BFS 1.5s, PR 2.8s" },
+        { "M077", "Walking实验框架",
+          "walking_experiment.cpp", 1095,
+          "BFS direction-switch, PR收敛追踪, SSSP delta-stepping" },
+        { "M078", "Walking真实数据集",
+          "walking_realscale.cpp", 522,
+          "SNAP格式加载, per-100万边checkpoint" },
+        { "M079", "GPU树遍历 + Walking Inspector",
+          "walking_gpu_tree.cu + walking_inspector.cpp", 1499,
+          "ART find_child GPU化, galloping intersect, interval stab" },
+        { "M080", "Warp-cooperative find_child",
+          "walking_warp_cooperative.cu (§1-§3)", 400,
+          "Node16 __ballot_sync 16-lane, Node48 warp-shuffle, 25K hits全对" },
+        { "M081", "Merge-path intersect",
+          "walking_warp_cooperative.cu (§4-§5)", 500,
+          "对角线二分, P线程并行, sizes 1K-1M tested" },
+        { "M082", "Multi-GPU ART partition",
+          "walking_warp_cooperative.cu (§6-§8)", 400,
+          "hash(prefix_byte)%num_gpus, balance 1.00-1.02" },
+        { "M083", "TemGraph successor链CSR化",
+          "walking_temgraph_gpu.cu (§1-§3)", 500,
+          "linked list → CSR, crossval全对" },
+        { "M084", "GPU temporal range query",
+          "walking_temgraph_gpu.cu (§4-§5)", 500,
+          "kern_temporal_range_query, 10000/10000 match" },
+        { "M085", "Successor walk batch",
+          "walking_temgraph_gpu.cu (§6-§7)", 400,
+          "kern_successor_walk 100/100 paths全对" },
+        { "M086", "NeoTree version chain GPU scan",
+          "walking_neotree_mvcc.cu (§1-§3)", 500,
+          "FlatVersionChain → CSR, kern_version_scan 65536/65536" },
+        { "M087", "GPU snapshot read",
+          "walking_neotree_mvcc.cu (§4-§5)", 400,
+          "kern_snapshot_read, read_verify全对" },
+        { "M088", "GC offload",
+          "walking_neotree_mvcc.cu (§6-§7)", 300,
+          "kern_gc_mark, 3.1%→96.9%梯度正确" },
+        { "M089", "Tier迁移延迟矩阵",
+          "walking_hetero_bench.cu (§1-§3)", 500,
+          "4x4 tier对, 4种size, P50/P99" },
+        { "M090", "热度驱动placement",
+          "walking_hetero_bench.cu (§4-§5)", 400,
+          "Zipf workload, kern_heat_update, promote/demote" },
+        { "M091", "并发查询+后台迁移",
+          "walking_hetero_bench.cu (§6-§7)", 400,
+          "kern_concurrent_lookup, throughput衰减曲线" },
+        { "M092", "LDBC SNB workload端到端",
+          "walking_integration.cu (§1-§5)", 600,
+          "kern_ldbc_batch, QPS/latency/tier命中率, GPU↔CPU crossval" },
+        { "M093", "论文实验复现",
+          "walking_integration.cu (§6-§7)", 400,
+          "Table 1-3自动化: tier参数, 算法对比, scalability" },
+        { "M094", "Release回归检测",
+          "walking_integration.cu (§8)", 200,
+          "BFS/PR/WCC/SSSP correctness, LDBC batch consistency" },
+    };
+
+    int total_lines = 0;
+
+    std::printf("  ┌──────┬────────────────────────────────┬───────┬──────────────────────────────────────────────┐\n");
+    std::printf("  │  ID  │ Title                          │ Lines │ Highlight                                    │\n");
+    std::printf("  ├──────┼────────────────────────────────┼───────┼──────────────────────────────────────────────┤\n");
+
+    for (const auto& e : changelog) {
+        std::printf("  │ %-4s │ %-30s │ %5d │ %-44s │\n",
+                    e.id, e.title, e.lines, e.highlight);
+        total_lines += e.lines;
+    }
+
+    std::printf("  ├──────┼────────────────────────────────┼───────┼──────────────────────────────────────────────┤\n");
+    std::printf("  │      │ TOTAL                          │ %5d │ %zu milestones (M074-M094)                    │\n",
+                total_lines, sizeof(changelog) / sizeof(changelog[0]));
+    std::printf("  └──────┴────────────────────────────────┴───────┴──────────────────────────────────────────────┘\n");
+
+    CHK(sizeof(changelog) / sizeof(changelog[0]) == 21, "CHANGELOG_COUNT",
+        "expected 21 changelog entries (M074-M094)");
+    CHK(total_lines > 8000, "CHANGELOG_LINES",
+        "total lines %d should be >8000", total_lines);
+
+    INSPECT("CHANGELOG", "milestones=%zu total_lines=%d",
+            sizeof(changelog) / sizeof(changelog[0]), total_lines);
+
+    std::printf("\n  ✓ M094 CHANGELOG printed.\n");
 }
 
 } // namespace integration
 } // namespace walking
 
 // ════════════════════════════════════════════════════════════════
-// MAIN
+//   main() — outside namespace
 // ════════════════════════════════════════════════════════════════
 
-int main(int argc, char** argv) {
-    using namespace walking::integration;
-    std::printf("╔═══════════════════════════════════════════════════════════╗\n");
-    std::printf("║  walking_integration — M092-M094 End-to-End             ║\n");
+int main(int argc, char* argv[]) {
+    if (argc > 1) g_dbg = atoi(argv[1]);
+
+    std::printf("╔═══════════════════════════════════════════════════════════════╗\n");
+    std::printf("║   Philemon-TSH Walking Integration (M092-M094)              ║\n");
+    std::printf("║   LDBC SNB Workload + Paper Tables + Regression + Changelog ║\n");
+    std::printf("╠═══════════════════════════════════════════════════════════════╣\n");
+    std::printf("║   Build: %s                                                 \n",
 #if WALKING_CUDA
-    std::printf("║  Mode: CUDA GPU                                         ║\n");
+                "GPU (WALKING_CUDA=1)"
 #else
-    std::printf("║  Mode: CPU fallback                                     ║\n");
+                "CPU (WALKING_CUDA=0)"
 #endif
-    std::printf("╚═══════════════════════════════════════════════════════════╝\n\n");
+                );
 
-    if(argc >= 2) g_dbg = std::stoi(argv[1]);
+#if WALKING_CUDA
+    int dev_count = 0;
+    GPU_CHECK(cudaGetDeviceCount(&dev_count));
+    std::printf("║   CUDA devices: %d\n", dev_count);
+    for (int d = 0; d < dev_count; d++) {
+        cudaDeviceProp prop;
+        GPU_CHECK(cudaGetDeviceProperties(&prop, d));
+        std::printf("║     GPU%d: %-30s SM=%d.%d VRAM=%.1f GB\n",
+                    d, prop.name, prop.major, prop.minor,
+                    prop.totalGlobalMem / (1024.0*1024.0*1024.0));
+    }
+#else
+    std::printf("║   [CPU-only mode: WALKING_CUDA=0]\n");
+#endif
+    std::printf("║   RSS at start: %ld KB\n", rss_kb());
+    std::printf("╚═══════════════════════════════════════════════════════════════╝\n");
 
-    std::printf("[SYS] PID=%d cores=%u RSS=%ldKB\n",
-                getpid(), std::thread::hardware_concurrency(), rss_kb());
+    INSPECT("MAIN_START", "walking_integration M092-M094 debug=%d", g_dbg);
 
-    // ── M092: LDBC end-to-end ──
-    exp_ldbc_e2e();
+    // ─── M092: LDBC SNB Workload End-to-End ──────────────────
+    walking::integration::exp_ldbc_e2e();
 
-    // ── M093: Paper tables ──
-    exp_paper_tables();
+    // ─── M093: Paper Experiment Reproduction ──────────────────
+    walking::integration::exp_paper_tables();
 
-    // ── M094: Regression + changelog ──
-    exp_regression();
+    // ─── M094: Regression Detection + CHANGELOG ──────────────
+    walking::integration::exp_regression();
+    walking::integration::print_changelog();
 
-    // ── Summary ──
+    // ─── SUMMARY ──────────────────────────────────────────────
     sep("SUMMARY");
-    std::printf("[SUMMARY] inspections=%lu pass=%lu fail=%lu\n", g_insp, g_pass, g_fail);
-    std::printf("[SUMMARY] RSS=%ldKB\n", rss_kb());
-    if(g_fail > 0) std::printf("[WARN] %lu assertion(s) FAILED\n", g_fail);
-    else std::printf("[OK] all M092-M094 passed\n");
-    return g_fail > 0 ? 1 : 0;
+    std::printf("  Inspections:    %lu\n", (unsigned long)g_insp);
+    std::printf("  Checks passed:  %lu\n", (unsigned long)g_pass);
+    std::printf("  Checks failed:  %lu\n", (unsigned long)g_fail);
+    std::printf("  RSS peak:       %ld KB\n", rss_kb());
+
+    CHK(g_fail == 0, "OVERALL", "all checks should pass");
+
+    if (g_fail == 0) {
+        std::printf("\n  ✓ All M092-M094 experiments PASSED\n");
+    } else {
+        std::printf("\n  ✗ %lu check(s) FAILED\n", (unsigned long)g_fail);
+    }
+
+    std::printf("\n╔═══════════════════════════════════════════════════════════════╗\n");
+    std::printf("║  walking_integration complete.                               ║\n");
+    std::printf("║  Milestones: M092 (LDBC) + M093 (Tables) + M094 (Regress)   ║\n");
+    std::printf("╚═══════════════════════════════════════════════════════════════╝\n");
+
+    return (g_fail > 0) ? 1 : 0;
 }
