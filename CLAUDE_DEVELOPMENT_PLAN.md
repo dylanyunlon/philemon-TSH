@@ -12,7 +12,7 @@
 | **M077-M079** | **✅ 第1位Claude完成** | **LLM4Walking实验 + GPU树遍历 (6新文件/3830行, ART/Interval/Galloping)** |
 | **M080-M082** | **✅ 第1位Claude调度Opus4.6完成** | **GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (1603行)** |
 | **M083-M085** | **✅ 第1位Claude调度Opus4.6完成** | **TemGraph GPU时序查询: CSR化 + range query + successor walk (1745行)** |
-| M086-M088 | 🔜 第4位Claude | NeoTree GPU MVCC snapshot + version chain scan (~1200行) |
+| **M086-M088** | **✅ 第1位Claude调度Opus4.6完成** | **NeoTree GPU MVCC: version chain flat化 + snapshot scan + GC offload (1686行)** |
 | M089-M091 | 🔜 第5位Claude | 跨tier benchmark + 热度驱动placement (~1300行) |
 | M092-M094 | 🔜 第6位Claude | 端到端集成 + LDBC workload + 论文复现 (~1200行) |
 
@@ -120,13 +120,23 @@
 | M084 | GPU temporal range query | tem_graph_impl query | ~500行 |
 | M085 | successor walk batch | tem_graph_impl successor_link | ~400行 |
 
-### 第4位Claude: M086-M088 — NeoTree GPU MVCC
+### 第4位Claude(Opus 4.6, 由第1位调度): M086-M088 — NeoTree GPU MVCC ✅
 
-| Milestone | 任务 | 来源 | 预计行数 |
+**交付物** (1新文件, 1686行):
+
+| 文件 | 行数 | 位置 | 核心算法 |
+|------|------|------|---------|
+| `walking_neotree_mvcc.cu` | 1686 | src/cuda/ | FlatVersionChain + version scan + snapshot read + GC mark/compact |
+
+**算法改动**: version chain flat化→CSR, kern_version_scan并行查timestamp, kern_gc_mark标记过期版本
+
+**实验验证**: M086 CPU scan 65536/65536正确, M088 GC压缩3.1%→96.9%梯度正确, read_verify全对
+
+| Milestone | 任务 | 来源 | 实际行数 |
 |-----------|------|------|---------|
-| M086 | version chain GPU scan: 版本链flat化, GPU并行查timestamp | neo_tree_version_impl.hpp find_version | ~500行 |
-| M087 | GPU snapshot read: GPU上snapshot_edges遍历 | neo_snapshot.hpp + neo_tree.hpp edges() | ~400行 |
-| M088 | GC offload: 过期版本判定GPU化, 回收CPU执行 | neo_tree_version_impl GC | ~300行 |
+| M086 | version chain GPU scan | neo_tree_version_impl.hpp | ~500行 |
+| M087 | GPU snapshot read | neo_snapshot.hpp + neo_tree.hpp | ~400行 |
+| M088 | GC offload | neo_tree_version_impl GC | ~300行 |
 
 ### 第5位Claude: M089-M091 — 跨tier Benchmark
 
