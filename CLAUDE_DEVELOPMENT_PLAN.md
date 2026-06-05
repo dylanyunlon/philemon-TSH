@@ -13,7 +13,7 @@
 | **M080-M082** | **✅ 第1位Claude调度Opus4.6完成** | **GPU warp-cooperative find_child + merge-path intersect + multi-GPU partition (1603行)** |
 | **M083-M085** | **✅ 第1位Claude调度Opus4.6完成** | **TemGraph GPU时序查询: CSR化 + range query + successor walk (1745行)** |
 | **M086-M088** | **✅ 第1位Claude调度Opus4.6完成** | **NeoTree GPU MVCC: version chain flat化 + snapshot scan + GC offload (1686行)** |
-| M089-M091 | 🔜 第5位Claude | 跨tier benchmark + 热度驱动placement (~1300行) |
+| **M089-M091** | **✅ Opus4.6完成** | **跨tier benchmark + 热度placement (1386行, 0 fail)** |
 | M092-M094 | 🔜 第6位Claude | 端到端集成 + LDBC workload + 论文复现 (~1200行) |
 
 ---
