@@ -212,3 +212,36 @@
 | M077-M091 (第2-6位Claude) | ~15 | ~5,300 |
 | **M095-M097 (第7位Claude)** | **+3** | **+2,989** |
 | **合计** | **~164** | **~67,204** |
+
+---
+
+### 第9位Claude(调度者): M099 — 11子系统综合验证 ✅
+
+| Milestone | 任务 | 实际行数 | 状态 |
+|-----------|------|---------|------|
+| M099 | 16个未测试模块的综合实验(SpinLock/ThreadPool/SeqLock/Bridge/Allocator/Scheduler/CostModel/LRU/Compaction/OnlineLearner/Prefetch/Rebalance/Hotness/Orchestrator/Harness) | 921行 | ✅ 完成 |
+
+**输出文件**: `experiment/m099_subsystem_experiment.cpp` (921行)
+**编译**: `g++ -std=c++17 -O2 -pthread` 零错误 ✅
+**运行**: 24/24 passed, 0 failed, 333ms ✅
+**20%算法修改**: contention统计, per-worker stats, Roofline OI+AMAT递归, Thompson采样+UCB1, 碎片检测compact_once, 2Q频率桶+tier感知评分, 双水位+affinity UF, CAS lock, DAG topo排序, shadow-run Welch t-test
+
+## 后续开发进度规划
+
+### 第10位Claude(Opus 4.6): M100-M101 — QueryExecutor + state_inspector + 综合debug
+### 第11位Claude(Opus 4.6): M102-M103 — adaptive_prefetch + tier_rebalancer 头文件冲突修复+深度测试
+### 第12位Claude(Opus 4.6): M104-M106 — GAPBS算法适配 + bitmap移植 + neo_reader_trace完整测试
+### 第13位Claude: M107-M109 — 论文实验数据收集 + LaTeX图表
+### 第14位Claude: M110-M112 — 最终Release + CHANGELOG + 回归全通过
+
+## 总量
+
+| Phase | 文件数 | 行数 |
+|-------|--------|------|
+| M001-M073 (之前) | 141 | 56,412 |
+| M074-M076 (第1位Claude) | +5 | +2,503 |
+| M077-M091 (第2-6位Claude) | ~15 | ~5,300 |
+| M095-M097 (第7位Claude) | +3 | +2,989 |
+| M098 (第8位Claude) | +7 | +2,134 |
+| **M099 (第9位Claude)** | **+1** | **+921** |
+| **合计** | **~172** | **~70,259** |
