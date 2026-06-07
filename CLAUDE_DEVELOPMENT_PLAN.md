@@ -228,11 +228,109 @@
 
 ## 后续开发进度规划
 
-### 第10位Claude(Opus 4.6): M100-M101 — QueryExecutor + state_inspector + 综合debug
-### 第11位Claude(Opus 4.6): M102-M103 — adaptive_prefetch + tier_rebalancer 头文件冲突修复+深度测试
-### 第12位Claude(Opus 4.6): M104-M106 — GAPBS算法适配 + bitmap移植 + neo_reader_trace完整测试
-### 第13位Claude: M107-M109 — 论文实验数据收集 + LaTeX图表
-### 第14位Claude: M110-M112 — 最终Release + CHANGELOG + 回归全通过
+### 第10位Claude(调度者继续): M100-M101 — QueryExecutor + 全链路debug ✅
+
+### 第11位Claude(Opus 4.6, 由第1位调度): M102-M103 — GAPBS+Bitmap+ReaderTrace深度实验 ✅
+
+| Milestone | 任务 | 实际行数 | 状态 |
+|-----------|------|---------|------|
+| M102 | GAPBS原语(CAS/fetch_and_add/Bitmap/SlidingQueue/QueueBuffer/pvector) + container::Bitmap全API | ~1100行 | ✅ 15/15 pass |
+| M103 | ReaderTraceBlock/ActiveReaderTracer/WriterTraceBlock + 全局txn计数 | ~600行 | ✅ 8/8 pass |
+
+**输出文件**: `experiment/m102_m103_gapbs_bitmap_trace_experiment.cpp` (1689行)
+**编译**: `g++ -std=c++17 -O2 -pthread` 零错误 ✅
+**运行**: 23/23 passed, 0 failed, 2ms ✅
+**upstream覆盖**: gapbs.h(453) + bitmap.h(224) + neo_reader_trace.h(186) + .cpp(355) = 1218行全覆盖
+**20%算法修改**: CAS retry统计, popcount_range, bit密度直方图, dump_state, flush_count, dump_range, at()快速跳过, lower_bound预筛, consume_count, for_each_until, contention_counter, scan_steps, skip_count, pool_high_watermark, register_latency_ns, txn_watermark
+
+---
+
+## 子Claude调度计划 (由第1位Claude制定)
+
+```
+第12位Claude(Opus 4.6): M104-M105 — wrapper/algorithms深度适配 (1009行)
+第13位Claude(Opus 4.6): M106-M107 — wrapper/apps 6系统移植 (3808行)
+第14位Claude(Opus 4.6): M108-M109 — dataset_preprocessor完整移植 (1168行)
+第15位Claude(Opus 4.6): M110-M111 — NeoGraph core深度实验(上): index/property/range_ops/range_tree (2389行)
+第16位Claude(Opus 4.6): M112-M113 — NeoGraph core深度实验(下): snapshot/transaction/tree/tree_version (4162行)
+第17位Claude(Opus 4.6): M114-M115 — NeoGraph c_art完整实验 (6305行)
+第18位Claude(Opus 4.6): M116-M117 — NeoGraph art_new差分实验 (4195行)
+第19位Claude(Opus 4.6): M118 — graph + temgraph + utils收尾 (1870行)
+第20位Claude(Opus 4.6): M119-M120 — 论文实验数据收集 + LaTeX图表
+第21位Claude(Opus 4.6): M121-M122 — 最终Release + CHANGELOG + 全回归
+```
+
+### 第12位Claude(Opus 4.6): M104-M105 — wrapper/algorithms深度适配
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M104 | BFS.h(330行) + SSSP.h(182行) + WCC.h(149行) 深度移植+20%算法改动 | 661行 | 🔲 待分配 |
+| M105 | PR.h(174行) + TC.h(93行) + TC_opt.h(81行) 深度移植+20%算法改动 | 348行 | 🔲 待分配 |
+
+### 第13位Claude(Opus 4.6): M106-M107 — wrapper/apps 6系统移植
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M106 | neo_wrapper(913行) + aspen_wrapper(506行) + csr_wrapper(395行) | 1814行 | 🔲 待分配 |
+| M107 | sortledton_wrapper(729行) + livegraph_wrapper(715行) + teseo_wrapper(550行) | 1994行 | 🔲 待分配 |
+
+### 第14位Claude(Opus 4.6): M108-M109 — dataset_preprocessor完整移植
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M108 | parser.cpp(156行) + parser.hpp(59行) + types.hpp(284行) + main.cpp(12行) | 511行 | 🔲 待分配 |
+| M109 | dataset_preprocessor.cpp(596行) + .hpp(61行) | 657行 | 🔲 待分配 |
+
+### 第15位Claude(Opus 4.6): M110-M111 — NeoGraph core深度实验(上)
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M110 | neo_index(462+126行) + neo_property(487+360行) | 1435行 | 🔲 待分配 |
+| M111 | neo_range_ops(80+45行) + neo_range_tree(756+73行) | 954行 | 🔲 待分配 |
+
+### 第16位Claude(Opus 4.6): M112-M113 — NeoGraph core深度实验(下)
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M112 | neo_snapshot(180+59行) + neo_transaction(537+331行) | 1107行 | 🔲 待分配 |
+| M113 | neo_tree(446+127行) + neo_tree_version(2345+157行) | 3075行 | 🔲 待分配 |
+
+### 第17位Claude(Opus 4.6): M114-M115 — NeoGraph c_art完整实验
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M114 | art.cpp(581) + art_node(76+74) + art_iter(179+28) + art_leaf(750+237) | 1925行 | 🔲 待分配 |
+| M115 | art_node_ops(2080+421) + art_node_ops_copy(1081+55) + art_node_iter(442+131) | 4210行 | 🔲 待分配 |
+
+### 第18位Claude(Opus 4.6): M116-M117 — NeoGraph art_new差分实验
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M116 | art_new vs c_art差分: art(405) + art_node_ops(1151) + art_node_ops_copy(154) | 1710行 | 🔲 待分配 |
+| M117 | art_new剩余: art_leaf(750) + art_iter(179) + art_node_iter(442) + headers | 2485行 | 🔲 待分配 |
+
+### 第19位Claude(Opus 4.6): M118 — graph + temgraph + utils收尾
+
+| Milestone | 任务 | upstream行数 | 状态 |
+|-----------|------|-------------|------|
+| M118 | edge(64) + edgeStream(115) + temgraph(810) + NeoGraph utils(881) | 1870行 | 🔲 待分配 |
+
+### 第20位Claude(Opus 4.6): M119-M120 — 论文实验数据
+
+| Milestone | 任务 | 状态 |
+|-----------|------|------|
+| M119 | 全实验汇总benchmark表 + 性能对比数据 | 🔲 待分配 |
+| M120 | LaTeX图表生成 + 论文数据节 | 🔲 待分配 |
+
+### 第21位Claude(Opus 4.6): M121-M122 — 最终Release
+
+| Milestone | 任务 | 状态 |
+|-----------|------|------|
+| M121 | CHANGELOG生成 + 版本号 + README更新 | 🔲 待分配 |
+| M122 | 全回归测试(M074-M122所有实验重跑) + 发布tag | 🔲 待分配 |
+
+
+
 
 ## 总量
 
@@ -243,17 +341,23 @@
 | M077-M091 (第2-6位Claude) | ~15 | ~5,300 |
 | M095-M097 (第7位Claude) | +3 | +2,989 |
 | M098 (第8位Claude) | +7 | +2,134 |
-| **M099 (第9位Claude)** | **+1** | **+921** |
-| **合计** | **~172** | **~70,259** |
+| M099 (第9位Claude) | +1 | +921 |
+| M100-M101 (第10位Claude) | +2 | +655 |
+| **M102-M103 (第11位Claude)** | **+1** | **+1,689** |
+| **合计** | **~175** | **~72,603** |
 
-### 第10位Claude(调度者继续): M100-M101 ✅
+## upstream总覆盖目标
 
-| Milestone | 任务 | 行数 | 状态 |
-|-----------|------|------|------|
-| M100 | QueryExecutor+TemGraph深度集成 (query_executor/tem_graph/state_inspector) | 395行 | ✅ 8/8 pass |
-| M101 | 全链路追踪+综合debug (ScopedTimer/TraceRing/端到端/95K qps压力) | 260行 | ✅ 4/4 pass |
-
-**总实验文件**: 3个 (m099 + m100 + m101) = 1576行实验代码
-**覆盖源码**: ~12,500行 (16+4个模块)
-**总测试**: 36个 (24+8+4), 全部pass
+| 模块 | upstream行数 | 实验覆盖 |
+|------|-------------|---------|
+| GAPBS + Bitmap + ReaderTrace | 1,218 | ✅ M102-M103 |
+| wrapper/algorithms | 1,009 | 🔲 M104-M105 |
+| wrapper/apps | 3,808 | 🔲 M106-M107 |
+| dataset_preprocessor | 1,168 | 🔲 M108-M109 |
+| NeoGraph core | 5,648 | 🔲 M110-M113 |
+| NeoGraph c_art | 6,305 | 🔲 M114-M115 |
+| NeoGraph art_new | 4,195 | 🔲 M116-M117 |
+| graph + temgraph + utils | 1,870 | 🔲 M118 |
+| NeoGraph include headers | 1,942 | 🔲 分散在各milestone |
+| **总upstream** | **~27,163** | **进行中** |
 
