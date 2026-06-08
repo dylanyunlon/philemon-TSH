@@ -1,0 +1,1 @@
+nvcc fatal   : Unsupported gpu architecture 'compute_90'
