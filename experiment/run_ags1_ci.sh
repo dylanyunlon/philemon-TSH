@@ -27,7 +27,7 @@ THREADS="${THREADS:-32}"
 NUMA_NODE="${NUMA_NODE:-1}"
 AUTO_PUSH="${AUTO_PUSH:-1}"
 CXX="${CXX:-g++}"
-CXXFLAGS="-std=c++17 -O2 -fopenmp -march=znver4"
+CXXFLAGS="-std=c++17 -O2 -fopenmp -march=native"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="experiment/logs/${TIMESTAMP}"
 SUMMARY_FILE="${LOG_DIR}/SUMMARY.md"
