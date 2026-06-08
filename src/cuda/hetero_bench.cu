@@ -70,8 +70,8 @@ struct TemporalEdge {
     uint64_t source;
     uint64_t destination;
     double   weight;
-    int32_t  ts_start;
-    int32_t  ts_end;
+    int32_t  ts_begin;
+    int32_t  ts_finish;
 };
 
 // Memory tier — now maps to actual devices
@@ -125,6 +125,30 @@ struct Partition {
     Partition()
         : id(0), tier(DeviceTier::HOST_DRAM), dev_ptr(nullptr),
           size_bytes(0), edge_count(0), ts_lo(0), ts_hi(0), stream(nullptr) {}
+
+    // Move constructor (needed because std::atomic is non-copyable)
+    Partition(Partition&& o) noexcept
+        : id(o.id), tier(o.tier), dev_ptr(o.dev_ptr),
+          size_bytes(o.size_bytes), edge_count(o.edge_count),
+          ts_lo(o.ts_lo), ts_hi(o.ts_hi),
+          access_count(o.access_count.load()),
+          last_access_ns(o.last_access_ns.load()),
+          stream(o.stream) { o.dev_ptr = nullptr; }
+
+    Partition& operator=(Partition&& o) noexcept {
+        if (this != &o) {
+            id = o.id; tier = o.tier; dev_ptr = o.dev_ptr;
+            size_bytes = o.size_bytes; edge_count = o.edge_count;
+            ts_lo = o.ts_lo; ts_hi = o.ts_hi;
+            access_count.store(o.access_count.load());
+            last_access_ns.store(o.last_access_ns.load());
+            stream = o.stream; o.dev_ptr = nullptr;
+        }
+        return *this;
+    }
+
+    Partition(const Partition&) = delete;
+    Partition& operator=(const Partition&) = delete;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -585,8 +609,8 @@ static QueryResult cross_tier_query(
                 return e.ts_begin < val;
             });
         for (auto it = first; it != edges.end(); ++it) {
-            if (it->ts_start > ts_hi) break;
-            if (it->ts_end <= ts_hi) {
+            if (it->ts_begin > ts_hi) break;
+            if (it->ts_finish <= ts_hi) {
                 ++total_matched;
             }
         }
