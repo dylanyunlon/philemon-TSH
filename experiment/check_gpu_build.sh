@@ -1,31 +1,32 @@
 #!/bin/bash
-# Quick build check for ags1 — run this first to verify compilation
+# Quick GPU build check for ags1 (CUDA 11.5 compatible)
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-echo "Checking nvcc..."
-nvcc --version
+echo "CUDA version:"
+nvcc --version | grep release
 
 echo ""
-echo "Checking GPU visibility..."
+echo "GPUs:"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
 
+NVFLAGS="-std=c++17 -O2 -arch=sm_86 -gencode=arch=compute_80,code=compute_80 -Xcompiler -pthread"
+
 echo ""
-echo "Test compile: hetero_bench.cu"
-nvcc -std=c++17 -O2 \
-    -arch=sm_86 -gencode=arch=compute_80,code=compute_80 \
-    -Xcompiler "-pthread" \
-    -o /tmp/hetero_bench_test src/cuda/hetero_bench.cu 2>&1
+echo "Compiling hetero_bench.cu..."
+nvcc $NVFLAGS -o /tmp/test_hetero src/cuda/hetero_bench.cu 2>&1
 echo "  OK"
 
 echo ""
-echo "Test compile: walking_hetero_bench.cu"
-nvcc -std=c++17 -O2 \
-    -arch=sm_86 -gencode=arch=compute_80,code=compute_80 \
-    -Xcompiler "-pthread" -DWALKING_CUDA=1 \
-    -o /tmp/walking_hetero_test src/cuda/walking_hetero_bench.cu 2>&1
+echo "Compiling walking_hetero_bench.cu..."
+nvcc $NVFLAGS -DWALKING_CUDA=1 -o /tmp/test_walking src/cuda/walking_hetero_bench.cu 2>&1
 echo "  OK"
 
 echo ""
-echo "All GPU builds OK. Ready to run full benchmark."
-rm -f /tmp/hetero_bench_test /tmp/walking_hetero_test
+echo "Compiling walking_integration.cu..."
+nvcc $NVFLAGS -DWALKING_CUDA=1 -o /tmp/test_integ src/cuda/walking_integration.cu 2>&1
+echo "  OK"
+
+echo ""
+echo "All builds passed. Ready for: bash experiment/run_ags1_gpu_bench.sh"
+rm -f /tmp/test_hetero /tmp/test_walking /tmp/test_integ
