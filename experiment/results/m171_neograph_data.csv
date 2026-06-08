@@ -1,0 +1,10 @@
+structure,operation,p50_us,p99_us,mean_us,count,throughput_mops
+ART_TierAware,insert,0.066,0.084,0.078,95173,8.463
+ART_TierAware,search,0.069,0.112,0.075,95173,8.912
+ART_TierAware,delete,11.984,35.751,12.649,10000,0.079
+StdMap,insert,0.188,1.185,0.210,95173,4.083
+StdMap,search,0.121,0.263,0.131,95173,5.908
+StdMap,delete,0.117,0.239,0.124,10000,6.322
+BTree64,insert,0.056,0.217,0.073,95173,7.930
+BTree64,search,0.064,0.154,0.070,95173,9.357
+BTree64,delete,0.064,0.153,0.070,10000,10.144
