@@ -180,12 +180,15 @@ NeoGraph核心引擎实验 — upstream NeoGraph库(18920行)深度覆盖
 - SOTA对比: 直接vs RapidStore VLDB'25 Table 3 published数据
 - 输出: experiment/results/m173_largescale.csv → 填入论文 Table 1 (main comparison)
 
-### 第4位Claude: M175-M176
-Tiered Memory实验 — RQ2+RQ4 HBM/GDDR/DRAM/SSD分层验证
-- 在ags1用H100 HBM + A6000 GDDR + host DRAM模拟三层
-- 实验: 1M→100M edges scaling, 每层占用率+迁移延迟
-- Migration overlap measurement (RQ6)
-- 输出: experiment/results/m175_tiered_memory.csv → 填入论文 Table 2 (e2e)
+### 第4位Claude: M175-M176 ✅ DONE
+Tiered Memory实验 — RQ2+RQ4+RQ6 HBM/GDDR/DRAM/SSD分层验证
+- 4-tier模型: HBM(deg>256)/GDDR(deg>32)/DRAM(deg>4)/SSD(rest)
+- BFS: tier-priority frontier展开, PR: lazy SSD accumulation (LAZY_K=4)
+- MigrationEngine: pipelined overlap (upstream: stop-world)
+- 18/18 PASS: BFS slowdown 1.10-1.41x, PR 1.68-2.06x
+- Tier分布: HBM~21%, GDDR~36%, DRAM~27%, SSD~12%
+- 输出: experiment/results/m175_tiered_memory.csv → 论文 Table 2 (e2e)
+         experiment/results/m175_tiered_memory.tex → Table 2a+2b LaTeX
 
 ### 第5位Claude: M177-M178
 Streaming + Compaction实验 — RQ5 流式写入+压缩
