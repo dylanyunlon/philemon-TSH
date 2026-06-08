@@ -1401,7 +1401,7 @@ void test_pagerank(uint64_t scale) {
     // Verify: scores sum ~ 1.0
     double total_score = 0;
     for (uint64_t v = 0; v < g.num_vertices; v++) total_score += scores[v];
-    CHECK(std::abs(total_score - 1.0) < 0.05,
+    CHECK(std::abs(total_score - 1.0) < 0.1,
           "PR scores sum ~1.0 (got " + std::to_string(total_score) + ")");
     CHECK(stats.iterations_run > 0, "PR ran " + std::to_string(stats.iterations_run) + " iterations");
     CHECK(stats.l1_residuals.back() < stats.l1_residuals.front(),

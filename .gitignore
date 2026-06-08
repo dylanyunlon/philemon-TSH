@@ -26,5 +26,4 @@ test/test_six_adapters
 experiment/philemon_experiment
 experiment/philemon_realscale
 experiment/data/*.txt
-experiment/logs/
 experiment/results/

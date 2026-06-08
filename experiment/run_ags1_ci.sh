@@ -122,8 +122,8 @@ run_single() {
     
     if [ $exit_code -eq 0 ]; then
         # 提取结果摘要
-        local pass=$(grep -c "PASS" "$run_log" || echo 0)
-        local fail=$(grep -c "FAIL" "$run_log" || echo 0)
+        local pass=$(grep -c "^  PASS:" "$run_log" || echo 0)
+        local fail=$(grep -c "^  FAIL:" "$run_log" || echo 0)
         log_info "  DONE: ${pass} PASS, ${fail} FAIL, ${elapsed_ms}ms total"
         echo "${name},${scale},${pass},${fail},${elapsed_ms},OK" >> "${LOG_DIR}/results.csv"
     else
