@@ -114,3 +114,40 @@ author: dylanyunlon <dogechat@163.com>
 读 experiment/logs/ 了解前一位的运行结果
 目标: 产出论文实验数据, 证明三层存储在大图+有限内存下的优势
 ```
+
+## 新一轮开发进度 (第1位Claude, 2026-06-08)
+
+### 第1位Claude（已完成）: M157-M158
+SOTA baseline comparison — upstream全覆盖实验 (17/17 pass)
+- 覆盖所有121个upstream文件
+- 20%算法改动: direction-optimized BFS, tier-weighted PR, delta-stepping SSSP, path-halving WCC
+- 密集breakpoint调试: BREAKPOINT_DUMP + per-tier access counters
+- Baseline对比: Philemon TieredCSR vs naive CSR (BFS 0.77x, PR 1.46x)
+- ags1 runner: experiment/run_m157_m158.sh (scale 14/16/18/20)
+
+### 第2位Claude: M159-M160
+ags1数据收集 + LaTeX table行产出
+- 在ags1 (128核, 1.5TB RAM, H100) 上运行multi-scale实验
+- Table 1: Philemon vs CSR (latency+吞吐)
+- Table 2: 三层tier分布统计
+
+### 第3位Claude: M161-M162
+真实数据集实验 (email-Enron, wiki-Vote)
+- SNAP数据下载+预处理
+- Table 3: 真实图性能对比
+
+### 第4位Claude: M163-M164
+并发读写隔离 (RQ3)
+- Writer insert/delete + Reader BFS/PR
+- 延迟增幅测量
+
+### 第5位Claude: M165-M166
+Ablation study (RQ5)
+- 6种tier配置对比
+- Figure 4数据
+
+### 第6位Claude: M167-M168
+论文数据整合 + LaTeX最终版
+- 汇总所有实验数据
+- Table 1-5 + Figure 1-4
+- 回归测试验证reproducibility
