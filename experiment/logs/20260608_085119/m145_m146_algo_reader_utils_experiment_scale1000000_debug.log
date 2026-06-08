@@ -1,0 +1,122 @@
+[DEBUG][Timer:test_timer] events=[
+  {"label":"phase1", "ms":10.184, "count":100},
+  {"label":"phase2", "ms":5.091, "count":200},
+]
+[INFO][86235] Test log INFO message
+[DEBUG][86235] Test log DEBUG message
+[WARN][86235] Test log WARN message
+[DEBUG][Logger] severity_histogram={TRACE:0, DEBUG:1, INFO:1, WARN:1, ERROR:0, FATAL:0}, total_bytes=124
+[ERROR_CTX] type=FILE_NOT_FOUND msg="test.el missing" at experiment/m145_m146_algo_reader_utils_experiment.cpp:1242
+[INFO][86235] EdgeListReader opened: /tmp/philemon_test_edges.el weighted=false
+Edge{0->1, w=0.840}Edge{0->2, w=0.701}Edge{1->2, w=0.561}[WARN][86235] Invalid edge line #1: invalid
+[INFO][86235] EdgeReader EOF: 7 edges, 1 invalid
+[DEBUG][Reader] lines_read=7 bytes=70 rate=51661.3 lines/s
+[INFO][86235] VertexReader opened: /tmp/philemon_test_vertices.txt
+[INFO][86235] VertexReader EOF: 7 vertices
+[DEBUG][Reader] lines_read=7 bytes=28 rate=138512.1 lines/s
+[INFO][86235] EdgeListReader opened: /tmp/philemon_test_weighted.wel weighted=true
+[INFO][86235] EdgeReader EOF: 3 edges, 0 invalid
+[INFO][86235] EdgeListReader opened: /tmp/philemon_test_batch.el weighted=false
+[INFO][86237] EdgeReader EOF: 1000 edges, 0 invalid
+[DEBUG][86237] Config: unrecognized key 'unknown_key'
+[INFO][86237] Config loaded from /tmp/philemon_test.cfg
+[DEBUG][DriverConfig] {
+  threads=8 seed=123 vertices=50000
+  BFS: alpha=15 beta=18 source=42
+  SSSP: delta=2.0 source=0
+  PR: iters=20 damping=0.8
+  insert_delete_ckpt=10000 writer_threads=16 reader_threads=16
+}
+[DEBUG][DriverConfig] {
+  threads=8 seed=123 vertices=50000
+  BFS: alpha=15 beta=18 source=42
+  SSSP: delta=2.0 source=0
+  PR: iters=20 damping=0.8
+  insert_delete_ckpt=10000 writer_threads=16 reader_threads=16
+}
+[WARN][86237] Config file not found: /tmp/nonexistent.cfg, using defaults
+[INFO][86237] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][93112] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[GRAPH] v=0 deg=38007 neighbors=[1(w=3.35) 2(w=5.14) 3(w=2.04) 4(w=0.85) 5(w=3.73) 6(w=1.43) 7(w=3.01) 8(w=9.00) 9(w=9.85) 10(w=6.38) ... +37997 more]
+[DEBUG][93132] [BFS] level=1 frontier=38007 edges=38007 mode=TD scout=9089003
+[DEBUG][93152] [BFS] level=2 frontier=433157 edges=433157 mode=BU scout=9089003
+[DEBUG][93157] [BFS] level=3 frontier=60582 edges=60582 mode=BU scout=9089003
+[DEBUG][93159] [BFS] level=4 frontier=503 edges=503 mode=TD scout=1
+[DEBUG][93159] [BFS] level=5 frontier=9 edges=9 mode=TD scout=9
+[DEBUG][BFS Stats] {
+  total_edges=532258 td_steps=3 bu_steps=3 switches=2 time_ms=27.52
+  frontier_sizes=[1,38007,433157,60582,503,9]
+  edges_per_level=[38007,433157,60582,503,9,0]
+}
+[INFO][93175] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][54] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[DEBUG][119] [PR] iter=0 L1=7.359189e-01 dangling=0.000000 top5=[0:2.065321e-03,2048:6.850151e-04,524288:6.719448e-04,32768:6.717762e-04,16:6.695321e-04]
+[DEBUG][164] [PR] iter=1 L1=2.764563e-01 dangling=0.000000 top5=[0:1.977436e-03,2048:7.280353e-04,16:7.193223e-04,32768:7.141277e-04,4096:7.132285e-04]
+[DEBUG][213] [PR] iter=2 L1=1.084242e-01 dangling=0.000000 top5=[0:1.996782e-03,2048:7.615142e-04,16:7.534518e-04,32768:7.500042e-04,65536:7.484797e-04]
+[DEBUG][317] [PR] iter=5 L1=4.868588e-03 dangling=0.000000 top5=[0:1.979589e-03,2048:7.710625e-04,16:7.629700e-04,32768:7.604694e-04,65536:7.596635e-04]
+[DEBUG][472] [PR] iter=10 L1=1.394346e-03 dangling=0.000000 top5=[0:1.955671e-03,2048:7.623557e-04,16:7.543327e-04,32768:7.519260e-04,65536:7.511407e-04]
+[DEBUG][627] [PR] iter=15 L1=5.906809e-04 dangling=0.000000 top5=[0:1.945180e-03,2048:7.580703e-04,16:7.500831e-04,32768:7.476889e-04,65536:7.468978e-04]
+[DEBUG][756] [PR] iter=19 L1=2.971558e-04 dangling=0.000000 top5=[0:1.941345e-03,2048:7.564997e-04,16:7.485257e-04,32768:7.461358e-04,65536:7.453424e-04]
+[DEBUG][PR Stats] iters=20 early_stop=no time_ms=686.09
+  residuals=[7.3592e-01,2.7646e-01,1.0842e-01,4.1059e-02,1.4818e-02,4.8686e-03,2.7793e-03,2.3370e-03,1.9668e-03,1.6559e-03,1.3943e-03,1.1742e-03,9.8887e-04,8.3280e-04,7.0137e-04,5.9068e-04,4.9746e-04,4.1896e-04,3.5284e-04,2.9716e-04]
+  dangling_sums=[0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000]
+[INFO][772] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][7647] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[DEBUG][7663] [SSSP] iter=1 bin=0 frontier=1
+[DEBUG][7663] [SSSP] iter=2 bin=1 frontier=7722
+[DEBUG][7680] [SSSP] iter=3 bin=2 frontier=113822
+[DEBUG][7751] [SSSP] iter=4 bin=3 frontier=165282
+[DEBUG][7797] [SSSP] iter=5 bin=4 frontier=139436
+[DEBUG][SSSP Stats] {
+  iters=12 relaxations=24510610 successful=1184804 max_bin=11 overflows=0 time_ms=197.73
+  distance_histogram={0:7308 1:230598 2:111346 3:64576 4:45356 5:34609 6:10018 7:930 8:375 9:175 10:60 11:8 999999:494641 }
+}
+[INFO][7876] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][14747] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[DEBUG][14797] [WCC] iter=1 merges=629011 change=yes
+[DEBUG][14821] [WCC] iter=2 merges=0 change=no
+[INFO][14851] [WCC] components=370989 top5=[root=0:sz=628814, root=241036:sz=3, root=464083:sz=3, root=571798:sz=2, root=518248:sz=2]
+[DEBUG][WCC Stats] {
+  iters=2 total_merges=629011 components=370989 largest=628814 time_ms=88.03
+  merges_per_iter=[629011,0]
+}
+[INFO][14872] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][21747] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[DEBUG][21764] [BFS] level=1 frontier=38007 edges=38007 mode=TD scout=9089003
+[DEBUG][21780] [BFS] level=2 frontier=433157 edges=433157 mode=BU scout=9089003
+[DEBUG][21785] [BFS] level=3 frontier=60582 edges=60582 mode=BU scout=9089003
+[DEBUG][21787] [BFS] level=4 frontier=503 edges=503 mode=TD scout=1
+[DEBUG][21787] [BFS] level=5 frontier=9 edges=9 mode=TD scout=9
+[DEBUG][21818] [WCC] iter=1 merges=629011 change=yes
+[DEBUG][21841] [WCC] iter=2 merges=0 change=no
+[INFO][21870] [WCC] components=370989 top5=[root=0:sz=628814, root=241036:sz=3, root=464083:sz=3, root=571798:sz=2, root=518248:sz=2]
+[INFO][21891] Generating RMAT graph: V=1000000 target_E=16000000
+[INFO][28762] [DEBUG][RMAT] V=1000000 E=15360228 deg_distribution={0:466931 1:140907 2:115899 4:96081 8:51490 16:67200 32:17144 64:22645 128:15505 256:2 512:4845 1024:1135 2048:5 4096:190 8192:20 32768:1 }
+[DEBUG][28779] [BFS] level=1 frontier=38007 edges=38007 mode=TD scout=9089003
+[DEBUG][28795] [BFS] level=2 frontier=433157 edges=433157 mode=BU scout=9089003
+[DEBUG][28800] [BFS] level=3 frontier=60582 edges=60582 mode=BU scout=9089003
+[DEBUG][28802] [BFS] level=4 frontier=503 edges=503 mode=TD scout=1
+[DEBUG][28802] [BFS] level=5 frontier=9 edges=9 mode=TD scout=9
+[DEBUG][28842] [PR] iter=0 L1=7.359189e-01 dangling=0.000000 top5=[0:2.065321e-03,2048:6.850151e-04,524288:6.719448e-04,32768:6.717762e-04,16:6.695321e-04]
+[DEBUG][28876] [PR] iter=1 L1=2.764563e-01 dangling=0.000000 top5=[0:1.977436e-03,2048:7.280353e-04,16:7.193223e-04,32768:7.141277e-04,4096:7.132285e-04]
+[DEBUG][28910] [PR] iter=2 L1=1.084242e-01 dangling=0.000000 top5=[0:1.996782e-03,2048:7.615142e-04,16:7.534518e-04,32768:7.500042e-04,65536:7.484797e-04]
+[DEBUG][28997] [PR] iter=5 L1=4.868588e-03 dangling=0.000000 top5=[0:1.979589e-03,2048:7.710625e-04,16:7.629700e-04,32768:7.604694e-04,65536:7.596635e-04]
+[DEBUG][29136] [PR] iter=10 L1=1.394346e-03 dangling=0.000000 top5=[0:1.955671e-03,2048:7.623557e-04,16:7.543327e-04,32768:7.519260e-04,65536:7.511407e-04]
+[DEBUG][29276] [PR] iter=15 L1=5.906809e-04 dangling=0.000000 top5=[0:1.945180e-03,2048:7.580703e-04,16:7.500831e-04,32768:7.476889e-04,65536:7.468978e-04]
+[DEBUG][29388] [PR] iter=19 L1=2.971558e-04 dangling=0.000000 top5=[0:1.941345e-03,2048:7.564997e-04,16:7.485257e-04,32768:7.461358e-04,65536:7.453424e-04]
+[DEBUG][29393] [SSSP] iter=1 bin=0 frontier=1
+[DEBUG][29394] [SSSP] iter=2 bin=1 frontier=7722
+[DEBUG][29408] [SSSP] iter=3 bin=2 frontier=113822
+[DEBUG][29478] [SSSP] iter=4 bin=3 frontier=165282
+[DEBUG][29524] [SSSP] iter=5 bin=4 frontier=139436
+[DEBUG][29622] [WCC] iter=1 merges=629011 change=yes
+[DEBUG][29645] [WCC] iter=2 merges=0 change=no
+[INFO][29679] [WCC] components=370989 top5=[root=0:sz=628814, root=241036:sz=3, root=464083:sz=3, root=571798:sz=2, root=518248:sz=2]
+[DEBUG][Timer:FullBench] events=[
+  {"label":"graph_gen", "ms":6886.593, "count":15360228},
+  {"label":"BFS", "ms":24.957, "count":532258},
+  {"label":"PageRank", "ms":588.235, "count":20},
+  {"label":"SSSP", "ms":196.056, "count":1184804},
+  {"label":"WCC", "ms":100.021, "count":629011},
+]
+[DEBUG][Logger] severity_histogram={TRACE:0, DEBUG:47, INFO:25, WARN:3, ERROR:0, FATAL:0}, total_bytes=7273

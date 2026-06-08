@@ -1,0 +1,5 @@
+experiment,scale,pass,fail,time_ms,status
+m145_m146_algo_reader_utils_experiment,1000,48,1,48,OK
+m145_m146_algo_reader_utils_experiment,10000,48,1,331,OK
+m145_m146_algo_reader_utils_experiment,100000,48,1,3708,OK
+m145_m146_algo_reader_utils_experiment,1000000,0,0,43479,CRASH(1)

@@ -1,0 +1,90 @@
+═══════════════════════════════════════════════════════
+ M145-M146: Algo/Reader/Utils Deep Experiment
+ Scale=1000000 Threads=32
+ Coverage: BFS(302) + PR(159) + SSSP(175) + WCC(137)
+           + readers(248) + utils(1031) = ~2052 upstream lines
+═══════════════════════════════════════════════════════
+
+=== Test 1: Timer + Log (upstream Timer.h + log/) ===
+  PASS: Timer lap >= 5ms (got 10.062833ms)
+  PASS: Timer lap2 >= 2ms
+  PASS: Timer total >= 10ms (got 15.161627ms)
+  PASS: Log + Timer integration works
+
+=== Test 2: Error types (upstream error_type/) ===
+  PASS: Error type FILE_NOT_FOUND
+  PASS: error_str(SUCCESS)
+
+=== Test 3: Readers (upstream readers/) ===
+  PASS: EdgeReader read 7 edges (got 7)
+  PASS: VertexReader read 7 vertices (got 7)
+  PASS: Weighted reader read 3 edges
+  PASS: Batch read 500 (got 500)
+  PASS: Batch read remaining 500 (got 500)
+
+=== Test 4: Config parser (upstream commandLineParser — 583+117 lines) ===
+  PASS: Config num_threads=8
+  PASS: Config alpha=15
+  PASS: Config beta=18
+  PASS: Config bfs_source=42
+  PASS: Config num_iterations=20
+  PASS: Config damping=0.85
+  PASS: Config num_vertices=50000
+  PASS: Config validation passes
+  PASS: parse_op bfs
+  PASS: parse_op sssp
+  PASS: parse_op pr
+  PASS: parse_op wcc
+  PASS: parse_op tc
+  PASS: parse_op mixed
+  PASS: parse_ts full
+  PASS: parse_ts high_degree
+  PASS: Default alpha=15 on missing file
+
+=== Test 5: BFS (upstream BFS.cpp — 302 lines) ===
+  PASS: BFS source distance = 0
+  PASS: BFS reached 532259 vertices
+  PASS: BFS max distance = 5
+  PASS: BFS traversed 532258 edges
+  PASS: BFS performed steps
+  BFS: 532259/1000000 reachable, max_dist=5, time=26.97ms
+
+=== Test 6: PageRank (upstream pageRank.cpp — 159 lines) ===
+  PASS: PR ran 20 iterations
+  PASS: PR converging (first residual=0.735919 last=0.000297)
+  PR: 20 iters, final_L1=2.97e-04, time=677.14ms
+
+=== Test 7: SSSP (upstream SSSP.cpp — 175 lines) ===
+  PASS: SSSP source distance = 0
+  PASS: SSSP relaxations > 0
+  PASS: SSSP successful relaxations > 0
+  PASS: SSSP reached 505359 vertices
+  SSSP: 505359/1000000 reachable, max_dist=23.92, relaxations=1184804, time=194.99ms
+
+=== Test 8: WCC (upstream WCC.cpp — 137 lines) ===
+  PASS: WCC found 370989 components
+  PASS: WCC largest component = 628814
+  PASS: WCC 2 iterations
+  PASS: WCC total_merges = 629011
+  PASS: WCC all component IDs valid
+  WCC: 370989 components, largest=628814, merges=629011, time=85.92ms
+
+=== Test 9: Cross-algorithm BFS/WCC consistency ===
+  PASS: WCC component(628814) >= BFS reachable/2(266129)
+  Consistency: BFS_reachable=532259 WCC_source_comp=628814
+
+=== Test 10: Full benchmark at scale=1000000 ===
+  PASS: Full benchmark completed
+
+  ┌─────────────┬───────────┬──────────────────────┐
+  │ Algorithm   │ Time (ms) │ Key metric           │
+  ├─────────────┼───────────┼──────────────────────┤
+  │ BFS         │     24.43 │ 532259 reachable          │
+  │ PageRank    │    588.84 │ 20 iters, L1=2.97e-04    │
+  │ SSSP        │    195.90 │ 1184804 relaxations       │
+  │ WCC         │     91.90 │ 370989 components        │
+  └─────────────┴───────────┴──────────────────────┘
+
+═══════════════════════════════════════════════════════
+ Results: 46 PASS, 1 FAIL
+═══════════════════════════════════════════════════════
