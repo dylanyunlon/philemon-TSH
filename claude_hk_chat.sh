@@ -5,9 +5,9 @@
 # ============================================================
 set -euo pipefail
 
-ORG="0de6831b-fb77-41c7-bfb9-0899fb74f90f"
+ORG="9b279708-8d27-463a-bdc8-792a764ed709"
 BASE="https://claude.hk.cn/api/organizations/${ORG}"
-MODEL="${MODEL:-claude-sonnet-4-6}"
+MODEL="${MODEL:-claude-opus-4-6}"
 EFFORT="${EFFORT:-high}"
 THINKING="${THINKING:-off}"
 TIMEOUT="${TIMEOUT:-300}"
@@ -29,6 +29,11 @@ load_cookie() {
   if [ -f "$CFG/cookie.txt" ]; then
     COOKIES=$(head -1 "$CFG/cookie.txt")
     echo "$COOKIES" > /tmp/claude_hk_cookie.txt
+  elif [ -f "$CFG/raw_curl.txt" ]; then
+    COOKIES=$(grep -oP "(?<=-b ')[^']*" "$CFG/raw_curl.txt" 2>/dev/null || true)
+    if [ -n "$COOKIES" ]; then
+      echo "$COOKIES" > /tmp/claude_hk_cookie.txt
+    fi
   fi
   if [ -z "${COOKIES:-}" ]; then
     echo "ERROR: No cookie. 把curl里的cookie写入 /tmp/claude_hk_cookie.txt"

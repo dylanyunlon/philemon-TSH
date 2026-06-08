@@ -151,3 +151,71 @@ Ablation study (RQ5)
 - 汇总所有实验数据
 - Table 1-5 + Figure 1-4
 - 回归测试验证reproducibility
+
+## Phase 4: M169-M180 — 大规模SOTA实验 + 论文数据填充
+
+目标: 在ags1服务器上运行大规模实验, 产出超越SOTA的数据填入论文LaTeX表格。
+参考: github.com/google-deepmind/alphaproof-nexus-results (Lean proof验证结构)
+
+### 第1位Claude: M169-M170 (当前)
+Driver Workload Engine — upstream driver.h(1577行) 全覆盖 + SOTA对比
+- 移植: driver.h + wrapper.h + 6 backend adapters + 6 algo wrappers + main.cpp (6972行)
+- [MOD 20%]: tier-aware batch sizing, direction-optimized BFS, tier-weighted PR, weighted UnionFind
+- SOTA对比: Philemon TieredCSR vs CSR baseline, 校准 vs RapidStore/Sortledton/Teseo/LiveGraph/Aspen
+- 输出: experiment/results/m169_paper_data.csv → 填入论文 Table 1-2
+- ags1 runner: experiment/run_m169_m170.sh (multi-scale 14→24)
+- 状态: 17/17 PASS ✓
+
+### 第2位Claude: M171-M172
+NeoGraph核心引擎实验 — upstream NeoGraph库(18920行)深度覆盖
+- 覆盖: c_art + art_new + ART insert/delete/search + COW操作
+- [MOD 20%]: tier-aware ART node layout (hot inner nodes→DRAM, cold leaves→SSD)
+- 实验: ART操作延迟 vs std::map vs B-tree baseline
+- 输出: experiment/results/m171_neograph_data.csv → 填入论文 Table 3 (index structure)
+
+### 第3位Claude: M173-M174
+大规模图实验 — LiveJournal + Twitter + uk-2007 真实数据集
+- 下载SNAP/LAW数据集, 预处理为edge-stream格式
+- 运行: BFS/PR/SSSP/WCC at scale 20-26 on ags1
+- SOTA对比: 直接vs RapidStore VLDB'25 Table 3 published数据
+- 输出: experiment/results/m173_largescale.csv → 填入论文 Table 1 (main comparison)
+
+### 第4位Claude: M175-M176
+Tiered Memory实验 — RQ2+RQ4 HBM/GDDR/DRAM/SSD分层验证
+- 在ags1用H100 HBM + A6000 GDDR + host DRAM模拟三层
+- 实验: 1M→100M edges scaling, 每层占用率+迁移延迟
+- Migration overlap measurement (RQ6)
+- 输出: experiment/results/m175_tiered_memory.csv → 填入论文 Table 2 (e2e)
+
+### 第5位Claude: M177-M178
+Streaming + Compaction实验 — RQ5 流式写入+压缩
+- 持续写入下selection延迟trace
+- Compaction spike测量 (0.24-0.28ms target)
+- Segment growth analysis
+- 输出: experiment/results/m177_streaming.csv → 填入论文 Figure (latency trace)
+
+### 第6位Claude: M179-M180
+论文最终数据整合 + LaTeX表格更新
+- 汇总M169-M178所有CSV数据
+- 更新philemon_tsh_reconstructed.tex中的Table 1-5
+- 添加缺失的Figure数据
+- 全量回归测试
+- 输出: 最终论文版本 ready for submission
+
+### 服务器实验流程
+1. ags1运行 experiment/run_m*.sh → 产出CSV到 experiment/results/
+2. git push到main分支
+3. 子Claude pull main分支获取最新数据
+4. 子Claude基于数据更新论文LaTeX
+
+### SOTA目标 (LiveJournal, 128线程)
+| System       | Insert MEPS | BFS(s) | PR 10iter(s) | Memory(GB) |
+|-------------|------------|--------|-------------|-----------|
+| Philemon    | ≥2.0       | ≤30    | ≤300        | ≤2.0(+SSD)|
+| RapidStore  | ~2.5       | ~25    | ~295        | ~6.2      |
+| Sortledton  | ~3.0       | ~25    | ~499        | ~3.7      |
+| Teseo       | ~1.5       | ~49    | ~295        | ~5.3      |
+| LiveGraph   | ~0.8       | ~69    | ~997        | ~7.0      |
+| Aspen       | ~1.2       | ~25    | ~517        | ~28.3     |
+
+Philemon优势: 1/3 memory + SSD 达到纯DRAM系统90%性能
