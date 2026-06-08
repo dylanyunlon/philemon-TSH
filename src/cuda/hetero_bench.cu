@@ -43,9 +43,6 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
-#include <shared_mutex>
-#include <functional>
-#include <unordered_map>
 #include <string>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -381,7 +378,7 @@ static void experiment_bandwidth(HeteroAllocator& alloc) {
 
 struct PartitionSet {
     std::vector<Partition> parts;
-    std::shared_mutex mu;
+    std::mutex mu;
     HeteroAllocator& alloc;
 
     PartitionSet(HeteroAllocator& a) : alloc(a) {}
@@ -540,7 +537,7 @@ static QueryResult cross_tier_query(
     // Step 1: Find overlapping partitions
     std::vector<size_t> overlap_ids;
     {
-        std::shared_lock<std::shared_mutex> lk(ps.mu);
+        std::lock_guard<std::mutex> lk(ps.mu);
         for (size_t i = 0; i < ps.parts.size(); ++i) {
             auto& p = ps.parts[i];
             if (p.ts_lo <= ts_hi && p.ts_hi >= ts_lo) {
@@ -811,7 +808,7 @@ static void experiment_concurrent(PartitionSet& ps) {
         // Migration thread: continuously promote hottest DRAM partitions to H100
         std::thread migrator([&]() {
             while (!stop_migration.load(std::memory_order_acquire)) {
-                std::unique_lock<std::shared_mutex> lk(ps.mu);
+                std::lock_guard<std::mutex> lk(ps.mu);
                 for (auto& p : ps.parts) {
                     if (p.tier == DeviceTier::HOST_DRAM &&
                         p.access_count.load(std::memory_order_relaxed) > 5) {
