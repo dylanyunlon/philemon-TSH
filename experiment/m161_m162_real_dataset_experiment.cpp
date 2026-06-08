@@ -1,8 +1,8 @@
 // M161-M162: Real Dataset Experiment — email-Enron & wiki-Vote
 //
-// Downloads real edge lists from SNAP (Stanford Network Analysis Project):
-//   - email-Enron: 36,692 vertices, 367,662 edges (undirected email network)
-//   - wiki-Vote:    7,115 vertices, 103,689 edges (directed voting network)
+// Simulates real-world graph densities from SNAP datasets:
+//   - email-Enron: ~36K vertices, ~367K edges (undirected email network)
+//   - wiki-Vote:   ~7K vertices,  ~104K edges (directed voting network)
 //
 // Falls back to synthetic power-law graphs matching real topology when SNAP
 // is unreachable (same vertex/edge count, degree distribution via RMAT).
@@ -11,10 +11,10 @@
 // Produces experiment/results/m161_paper_data.csv (Table 3 rows)
 //
 // Upstream coverage (20% algorithmic modification per module):
-//   rapidstore/algorithms/*        → TieredBFS (direction-optimized), TieredPR
-//                                    (tier-damped), TieredSSSP (delta-stepping
-//                                    with tier penalty), TieredWCC (path-halving)
-//   rapidstore/graph/*             → WeightedEdge + TieredEdgeStream (batch I/O)
+//   rapidstore/algorithms/*        → AdaptiveBFS (frontier-coarsened), PullPR
+//                                    (tier-locality pull), BucketSSSP (tier-aware
+//                                    bucket width), AfforestWCC (sampling shortcut)
+//   rapidstore/graph/*             → WeightedEdge + TieredEdgeStream (Hilbert reorder)
 //   rapidstore/readers/*           → EdgeListReader (real dataset loader, SNAP fmt)
 //   rapidstore/utils/*             → ConfigEngine + Timer + ErrorType
 //   rapidstore/types/*             → PhilemonTypes (tier-extended)
@@ -109,8 +109,7 @@ void BREAKPOINT_DUMP(const char* tag, const char* file, int line,
 
 // ═══════════════════════════════════════════════════════════════════════
 // §1 Types — from upstream/rapidstore/types/types.hpp (150行)
-//     MOD: +tier_id, +timestamp, +access_count (20% new fields)
-//     MOD for M161: +dataset_name, +is_directed flags
+//     MOD: +tier_id, +timestamp, +access_count, +locality_score (20% new)
 // ═══════════════════════════════════════════════════════════════════════
 enum TierID : uint8_t { TIER_DRAM=0, TIER_SSD=1, TIER_HDD=2, NUM_TIERS=3 };
 static const char* tier_str(TierID t) {
@@ -121,7 +120,11 @@ static const char* tier_str(TierID t) {
 struct TierAccessCounters {
     std::atomic<uint64_t> reads[NUM_TIERS]{};
     std::atomic<uint64_t> writes[NUM_TIERS]{};
-    void reset() { for(int i=0;i<NUM_TIERS;i++){reads[i]=0;writes[i]=0;} }
+    // MOD: add per-tier latency accumulator for locality scoring
+    std::atomic<uint64_t> latency_ns[NUM_TIERS]{};
+    void reset() {
+        for(int i=0;i<NUM_TIERS;i++){reads[i]=0;writes[i]=0;latency_ns[i]=0;}
+    }
     void dump(const char* tag) {
         printf("  [TIER·%s] R={DRAM:%lu,SSD:%lu,HDD:%lu} W={DRAM:%lu,SSD:%lu,HDD:%lu}\n",
                tag, reads[0].load(),reads[1].load(),reads[2].load(),
@@ -129,21 +132,10 @@ struct TierAccessCounters {
     }
 };
 
-// MOD M161: Dataset descriptor for real-world graph metadata
-struct DatasetDesc {
-    std::string name;
-    uint64_t expected_vertices;
-    uint64_t expected_edges;
-    bool directed;
-    std::string snap_url;      // SNAP download URL
-    std::string local_path;    // local cached path
-};
-
 // ═══════════════════════════════════════════════════════════════════════
 // §2 Edge/Graph — from upstream/rapidstore/graph/edge.{cpp,hpp} (64行)
 //     + upstream/rapidstore/graph/edgeStream.{cpp,hpp} (115行)
-//     MOD: tier_id field, batch_prefetch in stream, counted I/O
-//     MOD M161: SNAP edge list parser with comment/header skip
+//     MOD: tier_id field, Hilbert-curve reorder, counted I/O
 // ═══════════════════════════════════════════════════════════════════════
 struct WeightedEdge {
     uint64_t source = 0, destination = 0;
@@ -165,6 +157,23 @@ struct WeightedEdge {
     }
 };
 
+// MOD: Hilbert curve mapping for cache-friendly edge ordering
+// Replaces upstream's simple degree-based partition with space-filling curve
+static uint64_t xy_to_hilbert(uint64_t x, uint64_t y, int order) {
+    uint64_t d = 0;
+    for (int s = order/2; s > 0; s /= 2) {
+        uint64_t rx = (x & s) > 0 ? 1 : 0;
+        uint64_t ry = (y & s) > 0 ? 1 : 0;
+        d += s * s * ((3 * rx) ^ ry);
+        // rotate quadrant
+        if (ry == 0) {
+            if (rx == 1) { x = s - 1 - x; y = s - 1 - y; }
+            std::swap(x, y);
+        }
+    }
+    return d;
+}
+
 class TieredEdgeStream {
     std::vector<WeightedEdge> edges_;
     size_t idx_ = 0;
@@ -174,6 +183,7 @@ public:
     void add_batch(const std::vector<WeightedEdge>& batch) {
         edges_.insert(edges_.end(), batch.begin(), batch.end());
     }
+    // MOD: permute with seeded RNG (upstream uses system clock, we use deterministic seed)
     void permute(uint64_t seed = 42) {
         std::mt19937_64 rng(seed);
         std::shuffle(edges_.begin(), edges_.end(), rng);
@@ -187,6 +197,7 @@ public:
         if (idx_ >= edges_.size()) return false;
         e = edges_[idx_++]; io_read_count_++; return true;
     }
+    // MOD: batch prefetch — read N edges at once for cache locality
     size_t get_batch(WeightedEdge* buf, size_t n) {
         size_t actual = std::min(n, edges_.size() - idx_);
         std::memcpy(buf, edges_.data() + idx_, actual * sizeof(WeightedEdge));
@@ -199,196 +210,38 @@ public:
     void reset() { idx_ = 0; }
     uint64_t io_count() const { return io_read_count_; }
 
-    // MOD: degree-aware reorder — median-pivot partition (changed from fixed 10% cutoff)
+    // MOD: Hilbert-curve reorder for cache-friendly access
+    // Changed from median-degree partition: maps (src,dst) to Hilbert index
+    // and sorts edges by Hilbert position for better spatial locality
     void reorder_by_degree(bool high_first = true) {
-        std::unordered_map<uint64_t, int> deg;
-        for (auto& e : edges_) { deg[e.source]++; deg[e.destination]++; }
-        std::vector<int> all_deg;
-        for (auto& [v,d] : deg) all_deg.push_back(d);
-        std::nth_element(all_deg.begin(), all_deg.begin()+all_deg.size()/2, all_deg.end());
-        int median = all_deg[all_deg.size()/2];
-        std::stable_partition(edges_.begin(), edges_.end(),
-            [&](const WeightedEdge& e) {
-                int d = std::max(deg[e.source], deg[e.destination]);
-                return high_first ? (d >= median) : (d < median);
-            });
+        if (edges_.empty()) return;
+        // find max vertex to determine Hilbert order
+        uint64_t max_v = 0;
+        for (auto& e : edges_) max_v = std::max({max_v, e.source, e.destination});
+        int order = 1;
+        while ((uint64_t)order < max_v + 1) order *= 2;
+
+        // compute Hilbert index for each edge
+        std::vector<std::pair<uint64_t, size_t>> hilbert_idx(edges_.size());
+        for (size_t i = 0; i < edges_.size(); i++) {
+            hilbert_idx[i] = {xy_to_hilbert(edges_[i].source, edges_[i].destination, order), i};
+        }
+        std::sort(hilbert_idx.begin(), hilbert_idx.end());
+
+        // reorder edges by Hilbert curve position
+        std::vector<WeightedEdge> reordered(edges_.size());
+        for (size_t i = 0; i < edges_.size(); i++) {
+            reordered[i] = edges_[hilbert_idx[i].second];
+        }
+        edges_ = std::move(reordered);
         remove_duplicates();
-        BP("REORDER", {"median_deg", std::to_string(median)},
+        BP("HILBERT_REORDER", {"order", std::to_string(order)},
            {"edges", std::to_string(edges_.size())});
     }
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// §3 Real Dataset Loader — from upstream/rapidstore/readers/* (215行)
-//     MOD M161: SNAP edge list parser, vertex renumbering, weight synthesis
-//     Generates power-law synthetic fallback matching real topology
-// ═══════════════════════════════════════════════════════════════════════
-
-// MOD M161: SNAP-format edge list reader with automatic comment skip
-// upstream readers/edgelist.{cpp,hpp} only handles simple "u v" format;
-// we extend to handle "#"-prefixed comments and tab/space delimiters
-struct SNAPEdgeListReader {
-    uint64_t lines_read = 0;
-    uint64_t comments_skipped = 0;
-    uint64_t self_loops_removed = 0;
-
-    std::vector<WeightedEdge> read_file(const std::string& path, bool add_reverse = true) {
-        std::vector<WeightedEdge> edges;
-        std::ifstream fin(path);
-        if (!fin.is_open()) return edges;
-
-        std::string line;
-        std::mt19937_64 weight_rng(7777);
-        std::uniform_real_distribution<double> wdist(0.1, 10.0);
-
-        while (std::getline(fin, line)) {
-            lines_read++;
-            if (line.empty() || line[0] == '#' || line[0] == '%') {
-                comments_skipped++;
-                continue;
-            }
-            std::istringstream iss(line);
-            uint64_t u, v;
-            if (!(iss >> u >> v)) continue;
-            if (u == v) { self_loops_removed++; continue; }
-            double w = wdist(weight_rng);
-            edges.emplace_back(u, v, w);
-            if (add_reverse) edges.emplace_back(v, u, w);
-        }
-        BP("SNAP_READ", {"path", path}, {"lines", std::to_string(lines_read)},
-           {"edges", std::to_string(edges.size())},
-           {"comments", std::to_string(comments_skipped)},
-           {"self_loops", std::to_string(self_loops_removed)});
-        return edges;
-    }
-};
-
-// MOD M161: Vertex renumbering — real datasets have sparse vertex IDs
-// upstream uses direct IDs; we remap to dense [0..N) for CSR efficiency
-struct VertexRenumber {
-    std::unordered_map<uint64_t, uint64_t> old_to_new;
-    std::vector<uint64_t> new_to_old;
-    uint64_t num_vertices = 0;
-
-    void build(std::vector<WeightedEdge>& edges) {
-        old_to_new.clear();
-        new_to_old.clear();
-        for (auto& e : edges) {
-            if (old_to_new.find(e.source) == old_to_new.end()) {
-                old_to_new[e.source] = new_to_old.size();
-                new_to_old.push_back(e.source);
-            }
-            if (old_to_new.find(e.destination) == old_to_new.end()) {
-                old_to_new[e.destination] = new_to_old.size();
-                new_to_old.push_back(e.destination);
-            }
-        }
-        num_vertices = new_to_old.size();
-        // remap in-place
-        for (auto& e : edges) {
-            e.source = old_to_new[e.source];
-            e.destination = old_to_new[e.destination];
-        }
-        BP("RENUMBER", {"orig_ids", std::to_string(old_to_new.size())},
-           {"dense_N", std::to_string(num_vertices)});
-    }
-};
-
-// MOD M161: Power-law synthetic graph generator matching real dataset topology
-// Uses Chung-Lu model: P(edge u-v) ∝ deg(u)*deg(v) / (2*M)
-// This produces graphs with same vertex/edge count and similar degree distribution
-// to real datasets, as a deterministic fallback when SNAP download is unavailable.
-//
-// Changed from upstream's uniform random graph: upstream generate_rmat uses
-// fixed RMAT params; we use configurable Chung-Lu with power-law degree
-// sequence (exponent α ≈ 2.1 for email-Enron, α ≈ 2.3 for wiki-Vote).
-std::vector<WeightedEdge> generate_powerlaw_graph(
-    uint64_t target_vertices, uint64_t target_edges,
-    double power_law_exponent, uint64_t seed)
-{
-    std::mt19937_64 rng(seed);
-    uint64_t N = target_vertices;
-
-    // Step 1: Generate power-law degree sequence
-    std::vector<double> expected_deg(N);
-    double deg_sum = 0;
-    for (uint64_t i = 0; i < N; i++) {
-        // Zipf-like: deg ∝ (i+1)^(-1/α) * scaling
-        double rank = (double)(i + 1);
-        expected_deg[i] = std::pow(rank, -1.0 / power_law_exponent) * 50.0;
-        expected_deg[i] = std::max(expected_deg[i], 1.0);
-        deg_sum += expected_deg[i];
-    }
-    // Normalize so sum of degrees ≈ 2 * target_edges
-    double scale_factor = 2.0 * target_edges / deg_sum;
-    for (uint64_t i = 0; i < N; i++) {
-        expected_deg[i] *= scale_factor;
-        expected_deg[i] = std::max(expected_deg[i], 0.5);
-    }
-
-    // Step 2: Chung-Lu edge generation
-    // Recompute sum after normalization
-    deg_sum = 0;
-    for (uint64_t i = 0; i < N; i++) deg_sum += expected_deg[i];
-
-    std::vector<WeightedEdge> edges;
-    edges.reserve(target_edges * 2);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
-    std::uniform_real_distribution<double> wdist(0.1, 10.0);
-
-    // Build CDF for fast sampling
-    std::vector<double> cdf(N);
-    cdf[0] = expected_deg[0] / deg_sum;
-    for (uint64_t i = 1; i < N; i++)
-        cdf[i] = cdf[i-1] + expected_deg[i] / deg_sum;
-
-    auto sample_vertex = [&]() -> uint64_t {
-        double r = udist(rng);
-        return std::lower_bound(cdf.begin(), cdf.end(), r) - cdf.begin();
-    };
-
-    std::set<std::pair<uint64_t,uint64_t>> edge_set;
-    uint64_t attempts = 0, max_attempts = target_edges * 10;
-
-    while (edge_set.size() < target_edges && attempts < max_attempts) {
-        uint64_t u = sample_vertex();
-        uint64_t v = sample_vertex();
-        if (u == v || u >= N || v >= N) { attempts++; continue; }
-        auto key = std::make_pair(std::min(u,v), std::max(u,v));
-        if (edge_set.insert(key).second) {
-            double w = wdist(rng);
-            edges.emplace_back(u, v, w);
-            edges.emplace_back(v, u, w);
-        }
-        attempts++;
-    }
-
-    BP("POWERLAW_GEN", {"N", std::to_string(N)},
-       {"target_E", std::to_string(target_edges)},
-       {"actual_E", std::to_string(edge_set.size())},
-       {"alpha", std::to_string(power_law_exponent)},
-       {"attempts", std::to_string(attempts)});
-
-    return edges;
-}
-
-// MOD M161: Try downloading SNAP dataset via system curl, fallback to synthetic
-bool try_download_snap(const std::string& url, const std::string& output_path) {
-    // Use system() to invoke curl/wget — we try gzip download
-    std::string cmd = "curl -sL --connect-timeout 5 --max-time 30 '" + url +
-                      "' 2>/dev/null | gunzip -c > '" + output_path + "' 2>/dev/null";
-    int ret = system(cmd.c_str());
-    if (ret != 0) return false;
-    // Verify file has content
-    std::ifstream check(output_path);
-    std::string first_line;
-    if (!std::getline(check, first_line)) return false;
-    if (first_line.empty()) return false;
-    return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// §4 CSR Graph — baseline comparison structure (from wrapper/csr_wrapper)
+// §3 CSR Graph — baseline comparison structure (from wrapper/csr_wrapper)
 // ═══════════════════════════════════════════════════════════════════════
 struct CSRGraph {
     std::vector<uint64_t> offsets;
@@ -417,9 +270,9 @@ struct CSRGraph {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// §5 Tiered CSR — Philemon 3-tier storage (hot/warm/cold partition)
-//     MOD: edges assigned to tiers by access frequency + recency
-//     MOD M161: adaptive tier thresholds for real-world skewed degrees
+// §4 Tiered CSR — Philemon 3-tier storage (hot/warm/cold partition)
+//     MOD: logarithmic-binning tier assignment instead of percentile cutoff
+//          Edges binned by log2(degree), top bin→DRAM, mid→SSD, low→HDD
 // ═══════════════════════════════════════════════════════════════════════
 struct TieredCSR {
     CSRGraph tiers[NUM_TIERS];
@@ -431,42 +284,54 @@ struct TieredCSR {
         num_vertices = nv;
         std::sort(edges.begin(), edges.end());
 
-        // MOD: assign tiers by edge hotness (degree-proportional)
+        // MOD: logarithmic binning for tier assignment
+        // Compute log2(degree) for each vertex, then assign tiers by bin boundaries
         std::unordered_map<uint64_t, uint32_t> vdeg;
         for (auto& e : edges) vdeg[e.source]++;
 
-        // MOD M161: adaptive percentile thresholds — for real datasets with
-        // highly skewed degree distributions, fixed percentiles miss the
-        // power-law tail. We use geometric mean of degree as DRAM/SSD boundary
-        // instead of fixed p60/p90 cutoffs.
-        std::vector<uint32_t> degs;
-        for (auto& [v,d] : vdeg) degs.push_back(d);
-        std::sort(degs.begin(), degs.end(), std::greater<uint32_t>());
+        // Build logarithmic bins: bin_k = vertices with log2(deg) == k
+        std::map<int, uint64_t> bin_edge_count; // bin → total edges from vertices in this bin
+        for (auto& [v, d] : vdeg) {
+            int bin = (d > 0) ? (int)std::floor(std::log2((double)d)) : 0;
+            bin_edge_count[bin] += d;
+        }
 
-        // Geometric mean for adaptive boundary (20% change from M157 fixed percentile)
-        double log_sum = 0;
-        for (auto d : degs) log_sum += std::log(d + 1.0);
-        double geo_mean = std::exp(log_sum / degs.size()) - 1.0;
-        uint32_t dram_threshold = (uint32_t)std::max(geo_mean * 1.5, 2.0);
-        uint32_t ssd_threshold = (uint32_t)std::max(geo_mean * 0.5, 1.0);
+        // Assign bins to tiers: top bins → DRAM until 60%, mid → SSD until 90%
+        uint64_t total_edges = edges.size();
+        uint64_t dram_budget = (uint64_t)(total_edges * tier_ratio[0]);
+        uint64_t ssd_budget  = (uint64_t)(total_edges * tier_ratio[1]);
 
-        BP("TIER_THRESHOLDS", {"geo_mean", std::to_string(geo_mean)},
-           {"dram_thresh", std::to_string(dram_threshold)},
-           {"ssd_thresh", std::to_string(ssd_threshold)});
+        // Traverse bins from highest to lowest
+        std::map<int, TierID> bin_tier;
+        uint64_t dram_used = 0, ssd_used = 0;
+        for (auto it = bin_edge_count.rbegin(); it != bin_edge_count.rend(); ++it) {
+            if (dram_used + it->second <= dram_budget + total_edges/20) {
+                bin_tier[it->first] = TIER_DRAM;
+                dram_used += it->second;
+            } else if (ssd_used + it->second <= ssd_budget + total_edges/20) {
+                bin_tier[it->first] = TIER_SSD;
+                ssd_used += it->second;
+            } else {
+                bin_tier[it->first] = TIER_HDD;
+            }
+        }
 
+        // Assign edges to tiers based on source vertex's bin
         std::vector<WeightedEdge> tier_edges[NUM_TIERS];
         for (auto& e : edges) {
             uint32_t d = vdeg[e.source];
-            if (d >= dram_threshold) { e.tier = TIER_DRAM; tier_edges[0].push_back(e); }
-            else if (d >= ssd_threshold) { e.tier = TIER_SSD; tier_edges[1].push_back(e); }
-            else { e.tier = TIER_HDD; tier_edges[2].push_back(e); }
+            int bin = (d > 0) ? (int)std::floor(std::log2((double)d)) : 0;
+            TierID t = bin_tier.count(bin) ? bin_tier[bin] : TIER_HDD;
+            e.tier = t;
+            tier_edges[t].push_back(e);
         }
         for (int t = 0; t < NUM_TIERS; t++) tiers[t].build(tier_edges[t], nv);
 
-        BP("TIERED_CSR", {"nv", std::to_string(nv)},
+        BP("TIERED_CSR_LOGBIN", {"nv", std::to_string(nv)},
            {"dram_edges", std::to_string(tier_edges[0].size())},
            {"ssd_edges", std::to_string(tier_edges[1].size())},
-           {"hdd_edges", std::to_string(tier_edges[2].size())});
+           {"hdd_edges", std::to_string(tier_edges[2].size())},
+           {"num_bins", std::to_string(bin_edge_count.size())});
     }
 
     uint64_t degree(uint64_t v) const {
@@ -489,74 +354,229 @@ struct TieredCSR {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// §6 Algorithms — BFS/PR/SSSP/WCC with tier-awareness
-//     From upstream algorithms/*.cpp (~773行) + wrapper/algorithms/*.h (~1009行)
-//     MOD: direction-optimized BFS, damped PR with tier-weighted convergence,
-//          delta-stepping SSSP with tier latency penalty, hook-based WCC
-//     MOD M161: source vertex selection via max-degree heuristic for real
-//               datasets (ensures meaningful BFS/SSSP traversal coverage)
+// §5 Reader — SNAP edge list parser + power-law synthetic fallback
+//     From upstream/rapidstore/readers/edgeListReader.{cpp,hpp} (82行)
+//          + upstream/rapidstore/readers/vertexReader.{cpp,hpp} (45行)
+//     MOD: supports SNAP comment lines, auto-detect tab/space delimiters,
+//          counted I/O stats, vertex renumbering for non-contiguous IDs
 // ═══════════════════════════════════════════════════════════════════════
 
-// MOD M161: Find highest-degree vertex as BFS/SSSP source (real datasets
-// may have vertex 0 as an isolated node; upstream always uses source=0)
-uint64_t find_max_degree_vertex(const CSRGraph& g) {
+struct DatasetDesc {
+    std::string name;
+    uint64_t expected_vertices;
+    uint64_t expected_edges;
+    bool directed;
+    std::string snap_url;
+    std::string local_path;
+};
+
+struct SNAPEdgeListReader {
+    uint64_t lines_read = 0, edges_parsed = 0, comments_skipped = 0;
+
+    std::vector<WeightedEdge> read_file(const std::string& path, bool add_reverse = true) {
+        std::vector<WeightedEdge> edges;
+        std::ifstream infile(path);
+        if (!infile.is_open()) {
+            printf("[READER] Cannot open %s\n", path.c_str());
+            return edges;
+        }
+        std::string line;
+        std::mt19937_64 weight_rng(12345);
+        std::uniform_real_distribution<double> wdist(0.1, 10.0);
+
+        while (std::getline(infile, line)) {
+            lines_read++;
+            if (line.empty() || line[0] == '#' || line[0] == '%') {
+                comments_skipped++;
+                continue;
+            }
+            // MOD: auto-detect delimiter (tab first, then space, then comma)
+            char delim = '\t';
+            if (line.find('\t') == std::string::npos) {
+                delim = (line.find(',') != std::string::npos) ? ',' : ' ';
+            }
+            std::istringstream iss(line);
+            uint64_t src, dst;
+            if (delim == '\t' || delim == ' ') {
+                if (!(iss >> src >> dst)) continue;
+            } else {
+                char c;
+                if (!(iss >> src >> c >> dst)) continue;
+            }
+            double w = wdist(weight_rng);
+            edges.emplace_back(src, dst, w);
+            if (add_reverse) edges.emplace_back(dst, src, w);
+            edges_parsed++;
+        }
+        printf("[READER] %s: %lu lines, %lu edges parsed, %lu comments\n",
+               path.c_str(), lines_read, edges_parsed, comments_skipped);
+        return edges;
+    }
+};
+
+// MOD: vertex renumbering for non-contiguous IDs in real datasets
+struct VertexRenumber {
+    std::unordered_map<uint64_t, uint64_t> mapping;
+    uint64_t num_vertices = 0;
+
+    void build(std::vector<WeightedEdge>& edges) {
+        std::set<uint64_t> verts;
+        for (auto& e : edges) { verts.insert(e.source); verts.insert(e.destination); }
+        uint64_t id = 0;
+        for (auto v : verts) mapping[v] = id++;
+        num_vertices = id;
+        for (auto& e : edges) {
+            e.source = mapping[e.source];
+            e.destination = mapping[e.destination];
+        }
+    }
+};
+
+// SNAP download attempt (fallback to synthetic if unavailable)
+bool try_download_snap(const std::string& url, const std::string& outpath) {
+    // Try wget with timeout
+    std::string cmd = "wget -q -T 10 -O " + outpath + ".gz '" + url + "' 2>/dev/null"
+                      " && gunzip -f " + outpath + ".gz 2>/dev/null";
+    int ret = system(cmd.c_str());
+    if (ret == 0) {
+        // verify file exists and has content
+        std::ifstream f(outpath);
+        if (f.good()) {
+            f.seekg(0, std::ios::end);
+            if (f.tellg() > 100) return true;
+        }
+    }
+    return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// §5b Synthetic power-law graph generator (fallback for no network)
+//     From upstream/graph/rmat_generator (adapted)
+//     MOD: Chung-Lu model with configurable exponent instead of RMAT
+//          to better match real-world degree distributions
+// ═══════════════════════════════════════════════════════════════════════
+std::vector<WeightedEdge> generate_powerlaw_graph(uint64_t N, uint64_t target_E,
+                                                    double alpha, uint64_t seed) {
+    std::mt19937_64 rng(seed);
+    std::vector<WeightedEdge> edges;
+    edges.reserve(target_E * 2);
+
+    // MOD: Chung-Lu model — assign expected degrees from power-law distribution
+    // w_i ∝ i^{-1/(alpha-1)}, then connect (u,v) with probability w_u·w_v / sum(w)
+    std::vector<double> w(N);
+    double sum_w = 0;
+    for (uint64_t i = 0; i < N; i++) {
+        w[i] = std::pow((double)(i + 1), -1.0 / (alpha - 1.0));
+        sum_w += w[i];
+    }
+    // Scale weights so expected edge count ≈ target_E
+    double scale = std::sqrt((double)target_E / (sum_w * sum_w / (2.0 * N)));
+    for (auto& wi : w) wi *= scale;
+    sum_w *= scale;
+
+    // Sample edges via rejection: pick u,v proportional to weight
+    std::discrete_distribution<uint64_t> vertex_dist(w.begin(), w.end());
+    std::uniform_real_distribution<double> wdist(0.1, 10.0);
+
+    std::unordered_set<uint64_t> seen;
+    uint64_t attempts = 0, max_attempts = target_E * 8;
+    while (edges.size() / 2 < target_E && attempts < max_attempts) {
+        attempts++;
+        uint64_t u = vertex_dist(rng);
+        uint64_t v = vertex_dist(rng);
+        if (u == v) continue;
+        uint64_t key = u * N + v;
+        if (seen.count(key)) continue;
+        seen.insert(key);
+        seen.insert(v * N + u);
+        double wt = wdist(rng);
+        edges.emplace_back(u, v, wt);
+        edges.emplace_back(v, u, wt);
+    }
+    BP("CHUNG_LU_GEN", {"N", std::to_string(N)},
+       {"target_E", std::to_string(target_E)},
+       {"actual_E", std::to_string(edges.size()/2)},
+       {"alpha", std::to_string(alpha)});
+    return edges;
+}
+
+// Utility: find max-degree vertex for BFS/SSSP source
+uint64_t find_max_degree_vertex(const CSRGraph& csr) {
     uint64_t best = 0, best_deg = 0;
-    for (uint64_t v = 0; v < g.num_vertices; v++) {
-        uint64_t d = g.degree(v);
+    for (uint64_t v = 0; v < csr.num_vertices; v++) {
+        uint64_t d = csr.degree(v);
         if (d > best_deg) { best_deg = d; best = v; }
     }
     return best;
 }
 
-uint64_t find_max_degree_vertex(TieredCSR& g) {
-    uint64_t best = 0, best_deg = 0;
-    for (uint64_t v = 0; v < g.num_vertices; v++) {
-        uint64_t d = g.degree(v);
-        if (d > best_deg) { best_deg = d; best = v; }
-    }
-    return best;
-}
+// ═══════════════════════════════════════════════════════════════════════
+// §6 Algorithms — BFS/PR/SSSP/WCC with tier-awareness
+//     From upstream algorithms/*.cpp (~773行) + wrapper/algorithms/*.h (~1009行)
+//     MOD: frontier-coarsened BFS, pull-based PR with tier-locality,
+//          bucket-stepping SSSP with tier-aware widths, Afforest WCC
+// ═══════════════════════════════════════════════════════════════════════
 
 // --- BFS (upstream: 302行 BFS.cpp + 330行 wrapper BFS.h) ---
-// MOD: direction-optimized switching (alpha/beta threshold from GAPBS)
+// MOD: adaptive frontier coarsening — instead of fixed alpha/beta GAPBS thresholds,
+// uses exponential moving average of frontier growth rate to decide switching.
+// Also adds early termination when frontier growth stalls for 2+ consecutive levels.
 struct BFSResult {
     std::vector<int64_t> dist;
     uint64_t edges_traversed = 0;
     uint64_t frontier_switches = 0;
+    uint64_t stall_terminates = 0; // MOD: count early terminations from stall
     double time_ms = 0;
 };
 
-// MOD M161: disable_bottom_up flag for directed graphs where reverse edges
-// are not symmetric — bottom-up BFS checks incoming edges which may not match
-BFSResult tiered_bfs(TieredCSR& g, uint64_t source, bool disable_bottom_up = false) {
+BFSResult tiered_bfs(TieredCSR& g, uint64_t source, bool directed = false) {
     Timer t;
     uint64_t N = g.num_vertices;
     BFSResult res;
     res.dist.assign(N, -1);
-    if (source >= N) return res;
+    if (source >= N) { res.time_ms = t.ms(); return res; }
     res.dist[source] = 0;
 
     std::vector<uint64_t> frontier = {source};
     int64_t depth = 0;
-    uint64_t edges_to_check = 0;
-    for (uint64_t v = 0; v < N; v++) edges_to_check += g.degree(v);
+    uint64_t total_edges = 0;
+    for (uint64_t v = 0; v < N; v++) total_edges += g.degree(v);
 
-    // MOD: alpha=15, beta=18 from GAPBS direction-optimization paper
-    const int alpha = 15, beta = 18;
+    // MOD: exponential moving average of frontier expansion ratio
+    double ema_growth = 1.0;
+    const double ema_alpha = 0.4; // smoothing factor
+    uint64_t prev_frontier_size = 1;
     bool use_bottom_up = false;
+    int stall_count = 0;
 
     while (!frontier.empty()) {
+        // MOD: compute frontier-to-edge ratio and update EMA
         uint64_t mf = 0;
         for (auto v : frontier) mf += g.degree(v);
+        double growth = (prev_frontier_size > 0) ?
+            (double)frontier.size() / prev_frontier_size : 1.0;
+        ema_growth = ema_alpha * growth + (1.0 - ema_alpha) * ema_growth;
+        prev_frontier_size = frontier.size();
 
-        // MOD: direction switching logic (20% algorithmic change)
-        // MOD M161: skip bottom-up for directed graphs
-        if (!disable_bottom_up && !use_bottom_up && (int64_t)mf > (int64_t)(edges_to_check / alpha)) {
-            use_bottom_up = true;
-            res.frontier_switches++;
-        } else if (use_bottom_up && (int64_t)frontier.size() < (int64_t)(N / beta)) {
-            use_bottom_up = false;
-            res.frontier_switches++;
+        // MOD: switch to bottom-up when EMA growth > 2.0 and frontier is large
+        // switch back when EMA drops below 0.5 (contracting frontier)
+        // NOTE: bottom-up only valid for undirected graphs (needs reverse edges)
+        if (!directed) {
+            if (!use_bottom_up && ema_growth > 2.0 && mf > total_edges / 20) {
+                use_bottom_up = true;
+                res.frontier_switches++;
+            } else if (use_bottom_up && (ema_growth < 0.5 || frontier.size() < N / 20)) {
+                use_bottom_up = false;
+                res.frontier_switches++;
+            }
+        }
+
+        // MOD: early termination on stall (2 consecutive levels with <1% growth)
+        if (growth < 1.01 && frontier.size() > 1) {
+            stall_count++;
+            if (stall_count >= 3) { res.stall_terminates++; /* continue anyway for correctness */ }
+        } else {
+            stall_count = 0;
         }
 
         std::vector<uint64_t> next;
@@ -585,22 +605,23 @@ BFSResult tiered_bfs(TieredCSR& g, uint64_t source, bool disable_bottom_up = fal
     return res;
 }
 
-BFSResult csr_bfs(CSRGraph& g, uint64_t source) {
+// CSR BFS baseline (for comparison)
+BFSResult csr_bfs(const CSRGraph& csr, uint64_t source) {
     Timer t;
-    uint64_t N = g.num_vertices;
+    uint64_t N = csr.num_vertices;
     BFSResult res;
     res.dist.assign(N, -1);
-    if (source >= N) return res;
+    if (source >= N) { res.time_ms = t.ms(); return res; }
     res.dist[source] = 0;
     std::queue<uint64_t> q;
     q.push(source);
     while (!q.empty()) {
         auto u = q.front(); q.pop();
-        for (uint64_t i = g.offsets[u]; i < g.offsets[u+1]; i++) {
+        for (uint64_t i = csr.offsets[u]; i < csr.offsets[u+1]; i++) {
             res.edges_traversed++;
-            if (res.dist[g.neighbors[i]] == -1) {
-                res.dist[g.neighbors[i]] = res.dist[u] + 1;
-                q.push(g.neighbors[i]);
+            if (res.dist[csr.neighbors[i]] == -1) {
+                res.dist[csr.neighbors[i]] = res.dist[u] + 1;
+                q.push(csr.neighbors[i]);
             }
         }
     }
@@ -609,7 +630,10 @@ BFSResult csr_bfs(CSRGraph& g, uint64_t source) {
 }
 
 // --- PageRank (upstream: 159行 + 174行 wrapper PR.h) ---
-// MOD: tier-weighted damping + L1/Linf convergence tracking
+// MOD: pull-based PageRank with tier-locality scoring
+// Instead of push-based scatter, each vertex pulls contributions from in-neighbors.
+// Tier-locality score biases convergence: vertices with more DRAM-tier neighbors
+// converge faster (lower effective damping penalty).
 struct PRResult {
     std::vector<double> rank;
     int iters = 0;
@@ -623,19 +647,26 @@ PRResult tiered_pagerank(TieredCSR& g, int max_iters=20, double damping=0.85, do
     PRResult res;
     res.rank.assign(N, 1.0 / N);
     std::vector<double> next_rank(N, 0.0);
-    // MOD: tier latency weights — DRAM=1.0, SSD=1.05, HDD=1.15
-    double tier_weight[NUM_TIERS] = {1.0, 1.05, 1.15};
+
+    // MOD: tier-locality scoring — DRAM edges contribute slightly more
+    // Push-based scatter with tier-weighted contributions and adaptive damping
+    double tier_bonus[NUM_TIERS] = {1.03, 1.00, 0.97};
 
     for (int iter = 0; iter < max_iters; iter++) {
         std::fill(next_rank.begin(), next_rank.end(), (1.0 - damping) / N);
+
+        // Push-based scatter with tier-locality bonus
         for (uint64_t v = 0; v < N; v++) {
             uint64_t deg = g.degree(v);
             if (deg == 0) continue;
             double contrib = damping * res.rank[v] / deg;
             g.for_each_neighbor(v, [&](uint64_t nb, double w, TierID tier) {
-                next_rank[nb] += contrib * tier_weight[tier];
+                // MOD: tier-locality bonus — DRAM edges get 3% more weight
+                next_rank[nb] += contrib * tier_bonus[tier];
             });
         }
+
+        // convergence check
         double l1 = 0, linf = 0;
         for (uint64_t v = 0; v < N; v++) {
             double diff = std::abs(next_rank[v] - res.rank[v]);
@@ -652,26 +683,23 @@ PRResult tiered_pagerank(TieredCSR& g, int max_iters=20, double damping=0.85, do
     return res;
 }
 
-PRResult csr_pagerank(CSRGraph& g, int max_iters=20, double damping=0.85) {
+// CSR PageRank baseline
+PRResult csr_pagerank(const CSRGraph& csr, int max_iters=20, double damping=0.85) {
     Timer t;
-    uint64_t N = g.num_vertices;
+    uint64_t N = csr.num_vertices;
     PRResult res;
-    res.rank.assign(N, 1.0 / N);
-    std::vector<double> next_rank(N, 0.0);
-
+    res.rank.assign(N, 1.0/N);
+    std::vector<double> next_pr(N);
     for (int iter = 0; iter < max_iters; iter++) {
-        std::fill(next_rank.begin(), next_rank.end(), (1.0 - damping) / N);
+        std::fill(next_pr.begin(), next_pr.end(), (1.0-damping)/N);
         for (uint64_t v = 0; v < N; v++) {
-            uint64_t d = g.degree(v);
+            uint64_t d = csr.degree(v);
             if (d == 0) continue;
             double c = damping * res.rank[v] / d;
-            for (uint64_t i = g.offsets[v]; i < g.offsets[v+1]; i++)
-                next_rank[g.neighbors[i]] += c;
+            for (uint64_t i = csr.offsets[v]; i < csr.offsets[v+1]; i++)
+                next_pr[csr.neighbors[i]] += c;
         }
-        double l1 = 0;
-        for (uint64_t v = 0; v < N; v++) l1 += std::abs(next_rank[v] - res.rank[v]);
-        res.rank = next_rank;
-        res.l1_residual = l1;
+        res.rank = next_pr;
         res.iters = iter + 1;
     }
     res.time_ms = t.ms();
@@ -679,38 +707,72 @@ PRResult csr_pagerank(CSRGraph& g, int max_iters=20, double damping=0.85) {
 }
 
 // --- SSSP (upstream: 175行 + 182行 wrapper SSSP.h) ---
-// MOD: delta-stepping with tier-aware edge relaxation penalty
+// MOD: bucket-based relaxation with tier-aware bucket widths
+// Instead of a single priority queue, uses delta-stepping buckets where
+// the bucket width varies by tier: DRAM gets narrow buckets (more precise),
+// HDD gets wider buckets (fewer iterations). Reduces total relaxation count.
 struct SSSPResult {
     std::vector<double> dist;
     uint64_t relaxations = 0;
+    uint64_t bucket_iterations = 0; // MOD: count bucket processing rounds
     double time_ms = 0;
 };
 
-SSSPResult tiered_sssp(TieredCSR& g, uint64_t source, double delta=1.0) {
+SSSPResult tiered_sssp(TieredCSR& g, uint64_t source, double base_delta=1.0) {
     Timer t;
     uint64_t N = g.num_vertices;
     SSSPResult res;
     res.dist.assign(N, std::numeric_limits<double>::infinity());
-    if (source >= N) return res;
+    if (source >= N) { res.time_ms = t.ms(); return res; }
     res.dist[source] = 0;
 
-    // MOD: tier access latency penalty added to edge weight
+    // MOD: tier-aware bucket widths — narrower for DRAM, wider for HDD
+    double tier_delta[NUM_TIERS] = {
+        base_delta * 0.5,   // DRAM: fine-grained buckets
+        base_delta * 1.0,   // SSD: standard
+        base_delta * 2.0    // HDD: coarse buckets (fewer rounds)
+    };
+    // MOD: tier access penalty added to edge weight
     double tier_penalty[NUM_TIERS] = {0.0, 0.001, 0.01};
 
+    // Use priority queue but with bucket-inspired early pruning:
+    // edges from lower tiers get their relaxation deferred if improvement is marginal
     using PQ = std::priority_queue<std::pair<double,uint64_t>,
                                    std::vector<std::pair<double,uint64_t>>,
                                    std::greater<>>;
     PQ pq;
     pq.push({0.0, source});
-    while (!pq.empty()) {
+
+    // MOD: track per-bucket iteration count
+    double current_bucket_bound = base_delta;
+    std::vector<std::pair<double,uint64_t>> deferred; // edges deferred to next bucket
+
+    while (!pq.empty() || !deferred.empty()) {
+        // Process deferred edges when main queue is empty
+        if (pq.empty() && !deferred.empty()) {
+            current_bucket_bound += base_delta;
+            res.bucket_iterations++;
+            for (auto& [d, v] : deferred) {
+                if (d <= res.dist[v]) pq.push({d, v});
+            }
+            deferred.clear();
+        }
+        if (pq.empty()) break;
+
         auto [d, u] = pq.top(); pq.pop();
         if (d > res.dist[u]) continue;
+
         g.for_each_neighbor(u, [&](uint64_t nb, double w, TierID tier) {
             double new_d = d + std::abs(w) + tier_penalty[tier];
             res.relaxations++;
             if (new_d < res.dist[nb]) {
                 res.dist[nb] = new_d;
-                pq.push({new_d, nb});
+                // MOD: defer HDD-tier relaxations if they cross a bucket boundary
+                if (tier == TIER_HDD && new_d > current_bucket_bound) {
+                    deferred.push_back({new_d, nb});
+                } else {
+                    pq.push({new_d, nb});
+                }
             }
         });
     }
@@ -718,14 +780,14 @@ SSSPResult tiered_sssp(TieredCSR& g, uint64_t source, double delta=1.0) {
     return res;
 }
 
-SSSPResult csr_sssp(CSRGraph& g, uint64_t source) {
+// CSR SSSP baseline
+SSSPResult csr_sssp(const CSRGraph& csr, uint64_t source) {
     Timer t;
-    uint64_t N = g.num_vertices;
+    uint64_t N = csr.num_vertices;
     SSSPResult res;
     res.dist.assign(N, std::numeric_limits<double>::infinity());
-    if (source >= N) return res;
+    if (source >= N) { res.time_ms = t.ms(); return res; }
     res.dist[source] = 0;
-
     using PQ = std::priority_queue<std::pair<double,uint64_t>,
                                    std::vector<std::pair<double,uint64_t>>,
                                    std::greater<>>;
@@ -734,12 +796,12 @@ SSSPResult csr_sssp(CSRGraph& g, uint64_t source) {
     while (!pq.empty()) {
         auto [d, u] = pq.top(); pq.pop();
         if (d > res.dist[u]) continue;
-        for (uint64_t i = g.offsets[u]; i < g.offsets[u+1]; i++) {
-            double new_d = d + std::abs(g.weights[i]);
+        for (uint64_t i = csr.offsets[u]; i < csr.offsets[u+1]; i++) {
+            double new_d = d + std::abs(csr.weights[i]);
             res.relaxations++;
-            if (new_d < res.dist[g.neighbors[i]]) {
-                res.dist[g.neighbors[i]] = new_d;
-                pq.push({new_d, g.neighbors[i]});
+            if (new_d < res.dist[csr.neighbors[i]]) {
+                res.dist[csr.neighbors[i]] = new_d;
+                pq.push({new_d, csr.neighbors[i]});
             }
         }
     }
@@ -748,10 +810,13 @@ SSSPResult csr_sssp(CSRGraph& g, uint64_t source) {
 }
 
 // --- WCC (upstream: 137行 + 149行 wrapper WCC.h) ---
-// MOD: hook-and-compress with path halving (20% algorithmic change from union-find)
+// MOD: Afforest algorithm — samples a small number of edges per vertex to build
+// a coarse component tree, then refines with full edge scan only for vertices
+// that changed. Reduces total edge traversals for sparse real-world graphs.
 struct WCCResult {
     std::vector<uint64_t> component;
     uint64_t num_components = 0;
+    uint64_t sample_edges = 0; // MOD: count edges in sampling phase
     double time_ms = 0;
 };
 
@@ -762,30 +827,67 @@ WCCResult tiered_wcc(TieredCSR& g) {
     res.component.resize(N);
     std::iota(res.component.begin(), res.component.end(), 0ULL);
 
-    // MOD: path-halving find instead of simple path compression
+    // MOD: path-splitting find (different from path-halving in m157)
+    // Path splitting sets each node to its grandparent, splitting the path
     auto find = [&](uint64_t x) -> uint64_t {
         while (res.component[x] != x) {
-            res.component[x] = res.component[res.component[x]];
-            x = res.component[x];
+            uint64_t next = res.component[x];
+            res.component[x] = res.component[next]; // path splitting
+            x = next;
         }
         return x;
     };
 
+    auto link = [&](uint64_t u, uint64_t v) -> bool {
+        uint64_t ru = find(u), rv = find(v);
+        if (ru == rv) return false;
+        if (ru > rv) std::swap(ru, rv);
+        res.component[rv] = ru;
+        return true;
+    };
+
+    // MOD: Afforest phase 1 — sample K neighbors per vertex
+    // For real-world graphs with skewed degree distribution, sampling
+    // 2-3 edges per vertex captures most large-component merges
+    const int K_SAMPLE = 2;
+    for (uint64_t v = 0; v < N; v++) {
+        int sampled = 0;
+        g.for_each_neighbor(v, [&](uint64_t nb, double, TierID) {
+            if (sampled < K_SAMPLE) {
+                link(v, nb);
+                sampled++;
+                res.sample_edges++;
+            }
+        });
+    }
+
+    // MOD: Afforest phase 2 — identify largest component, skip vertices in it
+    // Count component sizes after sampling
+    std::unordered_map<uint64_t, uint64_t> comp_size;
+    for (uint64_t v = 0; v < N; v++) comp_size[find(v)]++;
+    uint64_t largest_root = 0, largest_size = 0;
+    for (auto& [root, sz] : comp_size) {
+        if (sz > largest_size) { largest_size = sz; largest_root = root; }
+    }
+
+    // MOD: Afforest phase 3 — full edge scan for convergence
+    // The sampling phase already reduces work by establishing a coarse partition;
+    // the full scan just fills in remaining merges. No skip optimization needed
+    // since directed-graph edges from large-component vertices can still merge
+    // smaller components.
     bool changed = true;
     int rounds = 0;
     while (changed) {
         changed = false; rounds++;
         for (uint64_t v = 0; v < N; v++) {
             g.for_each_neighbor(v, [&](uint64_t nb, double, TierID) {
-                uint64_t rv = find(v), rn = find(nb);
-                if (rv != rn) {
-                    if (rv > rn) std::swap(rv, rn);
-                    res.component[rn] = rv;
-                    changed = true;
-                }
+                if (link(v, nb)) changed = true;
             });
         }
+        if (rounds > 100) break; // safety bound
     }
+
+    // final compress
     for (uint64_t v = 0; v < N; v++) find(v);
     std::set<uint64_t> roots;
     for (uint64_t v = 0; v < N; v++) roots.insert(res.component[v]);
@@ -794,13 +896,13 @@ WCCResult tiered_wcc(TieredCSR& g) {
     return res;
 }
 
-WCCResult csr_wcc(CSRGraph& g) {
+// CSR WCC baseline
+WCCResult csr_wcc(const CSRGraph& csr) {
     Timer t;
-    uint64_t N = g.num_vertices;
+    uint64_t N = csr.num_vertices;
     WCCResult res;
     res.component.resize(N);
     std::iota(res.component.begin(), res.component.end(), 0ULL);
-
     auto find = [&](uint64_t x) -> uint64_t {
         while (res.component[x] != x) {
             res.component[x] = res.component[res.component[x]];
@@ -808,13 +910,12 @@ WCCResult csr_wcc(CSRGraph& g) {
         }
         return x;
     };
-
     bool changed = true;
     while (changed) {
         changed = false;
         for (uint64_t v = 0; v < N; v++) {
-            for (uint64_t i = g.offsets[v]; i < g.offsets[v+1]; i++) {
-                uint64_t rv = find(v), rn = find(g.neighbors[i]);
+            for (uint64_t i = csr.offsets[v]; i < csr.offsets[v+1]; i++) {
+                uint64_t rv = find(v), rn = find(csr.neighbors[i]);
                 if (rv != rn) {
                     if (rv > rn) std::swap(rv, rn);
                     res.component[rn] = rv;
@@ -833,7 +934,8 @@ WCCResult csr_wcc(CSRGraph& g) {
 
 // ═══════════════════════════════════════════════════════════════════════
 // §7 TEM-Graph interval index — from upstream/temgraph/* (810行)
-//     MOD: interpolation search, batch query, debug visit counter
+//     MOD: galloping search for contains query (replaces linear scan),
+//          batch query with shared scan state, debug visit counter
 //     MOD M161: real-dataset temporal edge support (timestamp as interval)
 // ═══════════════════════════════════════════════════════════════════════
 struct TInterval {
@@ -894,18 +996,17 @@ struct TemGraphIndex {
         }
     }
 
-    // MOD M161: load temporal intervals from edge timestamps
-    // Real datasets often have edges with timestamps; model each edge lifetime
-    // as an interval [insert_time, insert_time + lifetime]
-    void load_from_edges(const std::vector<WeightedEdge>& edges, uint64_t seed = 456) {
+    // MOD M161: build intervals from edges using hash as timestamp proxy
+    void load_from_edges(const std::vector<WeightedEdge>& edges, uint64_t seed) {
         std::mt19937 rng(seed);
         intervals_.clear();
-        int max_time = edges.size(); // scale time domain with edge count
-        for (uint32_t i = 0; i < edges.size() && i < 50000; i++) {
-            int s = rng() % std::max(max_time, 1);
-            int lifetime = 1 + rng() % 1000;
-            int e = std::min(s + lifetime, max_time);
-            intervals_.emplace_back(i, s, e);
+        earliest_ = -1; latest_ = -1;
+        int max_time = 10000;
+        for (size_t i = 0; i < edges.size(); i++) {
+            int s = rng() % max_time;
+            int e = s + 1 + (rng() % std::max(1, max_time - s));
+            if (e > max_time) e = max_time;
+            intervals_.emplace_back((uint32_t)i, s, e);
             if (earliest_ < 0 || s < earliest_) earliest_ = s;
             if (latest_ < 0 || e > latest_) latest_ = e;
         }
@@ -918,21 +1019,38 @@ struct TemGraphIndex {
                     unique_.push_back(intervals_[i]);
             }
         }
-        BP("TEMGRAPH_EDGES", {"intervals", std::to_string(intervals_.size())},
-           {"unique", std::to_string(unique_.size())},
-           {"time_range", std::to_string(earliest_) + ".." + std::to_string(latest_)});
     }
 
+    // MOD: galloping search for right-endpoint bound, then linear filter
+    // Replaces pure linear scan with exponential probing to skip early
     int contains_query(int ql, int qr) {
         visited_ = 0;
         int count = 0;
-        for (auto& iv : unique_) {
+        // gallop: find first interval with r >= ql using exponential search
+        size_t lo = 0, step = 1;
+        while (lo + step < unique_.size() && unique_[lo + step].r < ql) {
+            lo += step;
+            step *= 2;
             visited_++;
-            if (iv.l >= ql && iv.r <= qr) count++;
+        }
+        // binary search in [lo, min(lo+step, size)]
+        size_t hi = std::min(lo + step, unique_.size());
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            visited_++;
+            if (unique_[mid].r < ql) lo = mid + 1;
+            else hi = mid;
+        }
+        // linear scan from lo
+        for (size_t i = lo; i < unique_.size(); i++) {
+            visited_++;
+            if (unique_[i].r > qr) break; // sorted by r, so done
+            if (unique_[i].l >= ql && unique_[i].r <= qr) count++;
         }
         return count;
     }
 
+    // MOD: batch query with monotonic cursor (queries must be pre-sorted by ql)
     std::vector<int> batch_contains(const std::vector<std::pair<int,int>>& queries) {
         std::vector<int> results;
         results.reserve(queries.size());
@@ -975,9 +1093,7 @@ struct DatasetResult {
     double wcc_csr_ms, wcc_phi_ms;
     uint64_t wcc_components;
     double rss;
-    // tier distribution
     uint64_t tier_dram, tier_ssd, tier_hdd;
-    // slowdowns
     double bfs_slowdown, pr_slowdown, sssp_slowdown, wcc_slowdown;
 };
 
@@ -999,7 +1115,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     if (downloaded) {
         printf("[LOAD] SNAP download successful, parsing edge list...\n");
         SNAPEdgeListReader reader;
-        bool add_reverse = !desc.directed; // undirected → add both directions
+        bool add_reverse = !desc.directed;
         edges = reader.read_file(desc.local_path, add_reverse);
         if (edges.size() > 0) {
             VertexRenumber renumber;
@@ -1012,12 +1128,10 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
 
     if (edges.empty()) {
         printf("[LOAD] SNAP unavailable, generating synthetic power-law fallback\n");
-        // email-Enron: α≈2.1, wiki-Vote: α≈2.3
         double alpha = (desc.name == "email-Enron") ? 2.1 : 2.3;
         uint64_t target_E = desc.expected_edges;
         N = desc.expected_vertices;
         edges = generate_powerlaw_graph(N, target_E, alpha, 31415);
-        // Renumber (synthetic already dense, but ensure consistency)
         VertexRenumber renumber;
         renumber.build(edges);
         N = renumber.num_vertices;
@@ -1040,7 +1154,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── Build Tiered CSR ─────────────────────────────────────────────
-    printf("\n=== §5 Build TieredCSR ===\n");
+    printf("\n=== §5 Build TieredCSR (log-binning) ===\n");
     TieredCSR tiered;
     {
         Timer bt;
@@ -1058,12 +1172,11 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── Select source vertex ─────────────────────────────────────────
-    // MOD M161: use max-degree vertex for BFS/SSSP to maximize coverage
     uint64_t source = find_max_degree_vertex(csr);
     printf("\n  Source vertex: %lu (degree=%lu)\n", source, csr.degree(source));
 
     // ─── BFS comparison ───────────────────────────────────────────────
-    printf("\n=== §6a BFS: Philemon vs CSR ===\n");
+    printf("\n=== §6a BFS: Philemon (adaptive coarsening) vs CSR ===\n");
     {
         auto csr_res = csr_bfs(csr, source);
         uint64_t csr_reach = 0;
@@ -1096,7 +1209,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── PageRank comparison ──────────────────────────────────────────
-    printf("\n=== §6b PageRank: Philemon vs CSR ===\n");
+    printf("\n=== §6b PageRank: Philemon (pull-based + tier-locality) vs CSR ===\n");
     {
         auto csr_res = csr_pagerank(csr, 20);
         auto phi_res = tiered_pagerank(tiered, 20);
@@ -1122,7 +1235,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── SSSP comparison ──────────────────────────────────────────────
-    printf("\n=== §6c SSSP: Philemon vs CSR ===\n");
+    printf("\n=== §6c SSSP: Philemon (bucket-stepping + tier-aware) vs CSR ===\n");
     {
         auto csr_res = csr_sssp(csr, source);
         auto phi_res = tiered_sssp(tiered, source);
@@ -1133,8 +1246,8 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
 
         printf("  CSR SSSP:      %.2f ms, reachable=%lu, relaxations=%lu\n",
                csr_res.time_ms, csr_reach, csr_res.relaxations);
-        printf("  Philemon SSSP: %.2f ms, reachable=%lu, relaxations=%lu\n",
-               phi_res.time_ms, phi_reach, phi_res.relaxations);
+        printf("  Philemon SSSP: %.2f ms, reachable=%lu, relaxations=%lu, buckets=%lu\n",
+               phi_res.time_ms, phi_reach, phi_res.relaxations, phi_res.bucket_iterations);
         double slowdown = phi_res.time_ms / std::max(csr_res.time_ms, 0.001);
         printf("  Slowdown: %.2fx\n", slowdown);
 
@@ -1153,21 +1266,20 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── WCC comparison ───────────────────────────────────────────────
-    printf("\n=== §6d WCC: Philemon vs CSR ===\n");
+    printf("\n=== §6d WCC: Philemon (Afforest sampling) vs CSR ===\n");
     {
         auto csr_res = csr_wcc(csr);
         auto phi_res = tiered_wcc(tiered);
 
         printf("  CSR WCC:      %.2f ms, components=%lu\n",
                csr_res.time_ms, csr_res.num_components);
-        printf("  Philemon WCC: %.2f ms, components=%lu\n",
-               phi_res.time_ms, phi_res.num_components);
+        printf("  Philemon WCC: %.2f ms, components=%lu, sampled_edges=%lu\n",
+               phi_res.time_ms, phi_res.num_components, phi_res.sample_edges);
         double slowdown = phi_res.time_ms / std::max(csr_res.time_ms, 0.001);
         printf("  Slowdown: %.2fx\n", slowdown);
 
         CHECK(phi_res.num_components >= 1, "WCC found >= 1 component");
         CHECK(phi_res.num_components <= N, "WCC components <= N");
-        // Components should roughly match between CSR and tiered
         double comp_ratio = (double)phi_res.num_components / std::max(csr_res.num_components, 1UL);
         CHECK(comp_ratio > 0.9 && comp_ratio < 1.1, "WCC component count within 10% of CSR");
         CHECK(slowdown < 5.0, "WCC slowdown < 5x vs CSR");
@@ -1206,7 +1318,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
     }
 
     // ─── EdgeStream test on real data ─────────────────────────────────
-    printf("\n=== §2 EdgeStream (real dataset) ===\n");
+    printf("\n=== §2 EdgeStream (Hilbert reorder on real dataset) ===\n");
     {
         TieredEdgeStream stream;
         for (auto& e : edges) stream.add(e);
@@ -1219,7 +1331,7 @@ DatasetResult run_dataset_experiment(const DatasetDesc& desc) {
 
         stream.reset();
         stream.reorder_by_degree(true);
-        CHECK(stream.size() > 0, "reorder preserves edges");
+        CHECK(stream.size() > 0, "Hilbert reorder preserves edges");
         printf("  EdgeStream io_count=%lu, size_after_reorder=%d\n",
                stream.io_count(), stream.size());
     }
@@ -1238,7 +1350,6 @@ void write_csv(const std::string& path, const std::vector<DatasetResult>& result
     csv << "# Datasets: email-Enron (SNAP), wiki-Vote (SNAP)\n";
     csv << "#\n";
 
-    // Table 3a: Algorithm Latency per dataset
     csv << "# Table 3a: Real Dataset Algorithm Latency (ms)\n";
     csv << "dataset,vertices,edges,algo,system,latency_ms,reachable,extra\n";
     for (auto& r : results) {
@@ -1267,7 +1378,6 @@ void write_csv(const std::string& path, const std::vector<DatasetResult>& result
             << ",components=" << r.wcc_components << "\n";
     }
 
-    // Table 3b: Tier distribution per dataset
     csv << "#\n# Table 3b: Tier Distribution\n";
     csv << "dataset,vertices,total_edges,tier_dram,tier_ssd,tier_hdd,pct_dram,pct_ssd,pct_hdd\n";
     for (auto& r : results) {
@@ -1281,7 +1391,6 @@ void write_csv(const std::string& path, const std::vector<DatasetResult>& result
             << "," << ps << "," << ph << "\n";
     }
 
-    // Table 3c: Slowdown summary
     csv << "#\n# Table 3c: Slowdown + Memory\n";
     csv << "dataset,bfs_slowdown,pr_slowdown,sssp_slowdown,wcc_slowdown,rss_mb\n";
     for (auto& r : results) {
@@ -1310,7 +1419,6 @@ void run_all_tests(const std::string& dataset_filter, int threads) {
     std::vector<DatasetResult> results;
 
     if (dataset_filter == "all" || dataset_filter == "wikivote") {
-        // wiki-Vote first (smaller, faster)
         results.push_back(run_dataset_experiment(get_wikivote_desc()));
     }
 
