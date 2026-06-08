@@ -1,137 +1,115 @@
-# Philemon-TSH 多Claude开发进度计划
+# Philemon-TSH 多Claude开发计划 — 面向ATC 2026
 
-## 目标
-ATC 2026 论文实验数据：超越现有SOTA（LiveGraph, Sortledton, Teseo, Aspen）
-所有实验产出数据直接填入 LaTeX 论文 Table/Figure。
+## 论文核心claim与实验对应
 
-## 仓库规则（每位Claude必读）
-1. **不开新分支**，全部在 main 上开发
-2. **不用 v2/v3/port/old 等后缀**，文件命名统一
-3. 代码改的是**算法核心**，不是字符串/docstring/格式化
-4. push 前编译通过，测试全 PASS
-5. commit author: `dylanyunlon <dogechat@163.com>`
-6. 每位Claude完成后直接 `git push origin main`
-7. 子Claude用 `claude_hk_chat.sh` 调度，选择 **Opus 4.6**
-8. 如果输出被截断，发送 **Continue** 继续执行
+Philemon-TSH = RapidStore + 三层异构存储 (DRAM/SSD/HDD)
+upstream = SJTU-Liquid/RapidStore (VLDB'25)
 
-## 服务器 ags1 信息
-- **CPU**: 2× AMD EPYC 9354 (128核/256线程)
-- **RAM**: 1.5TB (NUMA node0: 774GB, node1: 774GB)
-- **GPU**: 2× RTX A6000 (49GB) + 1× H100 NVL (96GB)
-- **CUDA**: 11.5, Driver 550.144.03
-- **OS**: Ubuntu 22.04, kernel 5.15.0-164
-- **所有GPU在NUMA node1**: `numactl --cpunodebind=1 --membind=1`
+### 论文要回答的5个研究问题 (RQ)
+1. **RQ1**: 三层存储对insert/delete吞吐的影响（vs 纯DRAM系统）
+2. **RQ2**: graph analytics (BFS/PR/SSSP/WCC) 在三层上的性能与纯DRAM对比
+3. **RQ3**: 并发读写下的性能隔离（读延迟增幅 <15%）
+4. **RQ4**: 图规模从百万到十亿边的扩展性
+5. **RQ5**: 各组件ablation（tier placement, 压缩, prefetch, eviction）
 
-## 当前状态
-- **95 commits**, 163 src文件, 42 experiment文件
-- M001-M144 全部完成
-- **M145-M146**: 第1位Claude完成 (algorithms/readers/utils 深度实验, 47/47 pass)
+### SOTA竞品及真实数据 (来源: VLDB'25 RapidStore, LHGstore 2026)
 
----
+| System | 来源 | Insert (MEPS@32T) | BFS (s, LJ) | PR 10iter (s, LJ) | Memory (GB, LJ) |
+|--------|------|-------------------|-------------|-------------------|-----------------|
+| RapidStore | VLDB'25 upstream | ~2.5 | ~25 | ~295 | ~6.2 |
+| Sortledton | VLDB'22 | ~3.0 (最快) | ~25 | ~499 | ~3.7 |
+| Teseo | VLDB'21 | ~1.5 | ~49 | ~295 | ~5.3 |
+| LiveGraph | SOSP'20 | ~0.8 | ~69 | ~997 | ~7.0 |
+| Aspen | PLDI'19 | ~1.2 | ~25 | ~517 | ~28.3 |
+| LHGstore | 2026 | ~4.0 (learned) | ~22 | ~294 | ~4.1 |
+| **Philemon目标** | **ATC'26** | **≥2.0** | **≤30** | **≤300** | **≤2.0 (含SSD)** |
 
-## 多Claude开发进度
+注: 上表秒数来自LHGstore Table 3 (LiveJournal数据集), MEPS为估算
+Philemon的优势不在于绝对速度, 而在于**以1/3内存+SSD实现90%性能**
+
+### 真正的竞争定位
+
+**不应该声称beat所有SOTA的绝对性能** — 纯DRAM系统在内存足够时必然更快。
+
+**应该声称**: 
+- 当图规模超出DRAM容量时(如Friendster 65B edges), 纯DRAM系统OOM, Philemon仍可运行
+- 在等成本硬件(128GB DRAM + 2TB SSD vs 1.5TB DRAM)上, Philemon性能更优
+- 三层tier placement使热数据自动进DRAM, 冷数据在SSD, 算法性能保持90%+
+- 并发读写隔离优于Sortledton/Teseo(它们lock contention严重)
+
+## 仓库规则
+1. **不开新分支**, 全部main
+2. **不用v2/port/old后缀**
+3. **改算法核心**, 不改格式/docstring
+4. commit author: `dylanyunlon <dogechat@163.com>`
+5. push前编译通过, 测试全PASS
+6. 子Claude用 `claude_hk_chat.sh` 调度 Opus 4.6
+7. 截断发 Continue
+
+## ags1 服务器
+- 2×AMD EPYC 9354 (128核), 1.5TB RAM, 2×A6000+1×H100
+- NUMA node1 (GPU侧): `numactl --cpunodebind=1 --membind=1`
+
+## 开发进度
 
 ### 第1位Claude（已完成）: M145-M146
-**任务**: upstream algorithms/ (BFS/PR/SSSP/WCC) + readers/ + utils/ 全覆盖
-**交付**: `experiment/m145_m146_algo_reader_utils_experiment.cpp` (1581行, 47/47 pass)
-**SOTA数据**: BFS 3.4ms, PR 65ms, SSSP 19ms, WCC 12ms @ 100K vertices
+upstream algorithms/readers/utils 全覆盖, OpenMP并行算法, 26/26 pass
+**自我批判**: 实验与论文claim脱节, 没有测三层存储, 没有竞品对比
 
 ### 第2位Claude: M147-M148
-**任务**: upstream `main.cpp`(202行) + `wrapper.h`(249行) + `driver.h`(1577行) 深度实验
-**重点算法改动**:
-- driver 执行引擎：三层tier异步调度算法（DRAM→SSD→HDD pipeline overlap）
-- wrapper graph接口：CSR/COO动态转换算法 + tier-aware edge iterator
-- main入口：config-driven workload orchestration + 实验自动化
-**预计行数**: ~1500行
-**SOTA目标**: insert throughput > 2M edges/s（超越LiveGraph 1.8M）
+**任务**: 构建可复现的竞品对比实验框架
+- 下载并编译 RapidStore upstream 作为 baseline
+- 用 DynamicGraphStorage 测试框架的 config 格式
+- 在 LiveJournal + Graph500-24 上跑 insert/scan/search microbenchmark
+- 产出 Table: Philemon vs RapidStore vs CSR baseline
+**关键**: 不是自己编benchmark数字, 而是用upstream的driver跑真实对比
 
 ### 第3位Claude: M149-M150
-**任务**: NeoGraph include headers (1942行) 全覆盖 — `neo_types`, `neo_property`, `neo_config`, `neo_error_type`, `neo_helper`, `neo_spin_lock`, `neo_thread_pool`
-**重点算法改动**:
-- ART索引 tier-aware range查询算法
-- B+Tree snapshot隔离算法（MVCC优化）
-- 类型系统：temporal edge timestamp ordering + 压缩算法
-**预计行数**: ~1200行
-**SOTA目标**: point query < 1μs (超越Sortledton 1.3μs)
+**任务**: 三层存储的真实I/O路径
+- 实现 mmap + direct I/O 的 SSD tier (不是模拟)
+- edge数据按hotness分层: hot→DRAM, warm→mmap, cold→SSD direct I/O
+- 测量真实tier placement对算法性能的影响
+**SOTA对比**: 当内存限制为64GB时, 纯DRAM系统在Graph500-26上OOM, Philemon仍可运行
 
 ### 第4位Claude: M151-M152
-**任务**: 全upstream交叉验证 + SOTA benchmark数据生成
-**重点算法改动**:
-- 跨tier一致性验证算法（三层snapshot对齐）
-- LiveGraph/Sortledton/Teseo/Aspen 对比实验
-- Twitter/uk-2005/Friendster 大规模真实图集
-**预计行数**: ~1000行
-**SOTA目标**: 产出论文 Table 1 (insert/delete throughput) + Table 2 (algorithm latency)
+**任务**: 并发读写实验 (RQ3)
+- 32线程混合workload: N readers + M writers
+- 测量PR读延迟在不同writer压力下的增幅
+- 对比Sortledton (lock contention 34%退化) vs Philemon (subgraph-centric)
 
 ### 第5位Claude: M153-M154
-**任务**: ags1 GPU+CPU联合benchmark + 论文Table/Figure数据
-**重点算法改动**:
-- GPU BFS kernel: warp-cooperative direction-optimizing（H100 NVL优化）
-- GPU PageRank: multi-GPU partition（2×A6000 + H100 pipeline）
-- CPU-GPU异步数据迁移算法
-**预计行数**: ~800行
-**SOTA目标**: 产出 Figure 3 (scalability) + Figure 4 (GPU speedup) + Figure 5 (tier分布)
+**任务**: 大规模扩展性 + GPU加速 (RQ4)
+- Friendster (1.8B edges) 或 Twitter (1.5B edges) 规模测试
+- GPU BFS/PR kernel on H100
+- 产出 Figure: 性能随图规模的变化曲线
 
 ### 第6位Claude: M155-M156
-**任务**: 全回归 + CHANGELOG + Release + LaTeX数据整合
-**重点算法改动**:
-- 全链路regression检测算法（性能不退化保证）
-- 自动化LaTeX数据表生成脚本
-- ablation study: 各组件贡献量化
-**预计行数**: ~500行
-**SOTA目标**: 论文所有Table/Figure数据完整、可复现
-
----
+**任务**: Ablation + 论文数据整合 (RQ5)
+- 关闭tier placement → 性能退化多少
+- 关闭prefetch → 退化多少
+- 关闭压缩 → 内存增加多少
+- 产出所有论文Table/Figure的最终数据
 
 ## 运行流程
-
-### ags1 上执行
 ```bash
-cd /data/jiacheng/system/cache/temp/atc2026
+# ags1
+cd /data/jiacheng/system/cache/temp/atc2026/philemon-TSH
 git pull origin main
-./experiment/run_ags1_ci.sh   # 自动编译+多规模+push日志
+./experiment/run_ags1_ci.sh
 ```
-
-### 调度子Claude
-```bash
-./claude_hk_chat.sh  # 选择 Opus 4.6
-# 把本文件 + 第一轮prompt附件 + 最新日志发给子Claude
-# 子Claude读取 experiment/logs/ 中的 SUMMARY.md 和 CSV
-# 子Claude完成后直接 git push origin main
-```
-
-### 论文数据目标 (SOTA baselines to beat)
-
-| Metric | LiveGraph | Sortledton | Teseo | Aspen | **Philemon (目标)** |
-|--------|-----------|------------|-------|-------|-------------------|
-| Insert (M edges/s) | 1.8 | 1.2 | 2.1 | 0.9 | **≥3.0** |
-| Delete (M edges/s) | 1.5 | 1.0 | 1.8 | 0.7 | **≥2.5** |
-| BFS (ms, LiveJournal) | 850 | 1200 | 780 | 650 | **≤400** |
-| PageRank (ms, 10iter) | 2800 | 3500 | 2600 | 2200 | **≤1500** |
-| SSSP (ms) | 1500 | 2000 | 1400 | 1100 | **≤700** |
-| WCC (ms) | 900 | 1300 | 850 | 700 | **≤450** |
-| Point Query (μs) | 1.5 | 1.3 | 1.8 | 2.1 | **≤0.8** |
-| Scan (M edges/s) | 45 | 35 | 50 | 55 | **≥80** |
-
----
 
 ## 子Claude指令模板
-
-发给每位子Claude的开头：
 ```
-你是philemon-TSH项目的第N位Claude (Opus 4.6)。
-仓库: https://github.com/dylanyunlon/philemon-TSH
-你的任务是 M{X}-M{Y}。
+你是philemon-TSH第N位Claude (Opus 4.6)。
+仓库: github.com/dylanyunlon/philemon-TSH
+任务: M{X}-M{Y}
 
-规则:
-1. git clone, 在 main 分支上工作
-2. 不开新分支, 不用v2/port/old后缀
-3. 改算法核心, 不改格式
-4. 编译通过, 测试全PASS后 git push origin main
-5. commit author: dylanyunlon <dogechat@163.com>
-6. 如果被截断, 用户会发 Continue
+规则: main分支, 不开新分支, 不用后缀, 改算法核心
+编译通过+测试PASS后 git push origin main
+author: dylanyunlon <dogechat@163.com>
+截断时用户发 Continue
 
-读取 CLAUDE_DEVELOPMENT_PLAN.md 了解全局进度。
-读取 experiment/logs/ 了解前一位Claude的运行结果。
-你的目标是产出超越SOTA的实验数据填入论文。
+读 CLAUDE_DEVELOPMENT_PLAN.md 了解全局
+读 experiment/logs/ 了解前一位的运行结果
+目标: 产出论文实验数据, 证明三层存储在大图+有限内存下的优势
 ```
