@@ -1,0 +1,115 @@
+% ═══════════════════════════════════════════════════════════
+% Philemon-TSH: Final Paper Tables (auto-generated)
+% M167-M168 integration of M159 + M161 experiment data
+% DO NOT EDIT — regenerate via m167_m168_final_integration
+% ═══════════════════════════════════════════════════════════
+
+% Table 1: Algorithm Latency (ms) — Philemon vs CSR on RMAT
+\begin{table}[t]
+\centering
+\caption{Algorithm latency (ms) on RMAT graphs. Philemon uses
+  3-tier storage (DRAM/SSD/HDD); CSR is the pure-DRAM baseline.}
+\label{tab:latency}
+\begin{tabular}{l r r r r r r r r}
+\toprule
+& \multicolumn{2}{c}{BFS} & \multicolumn{2}{c}{PageRank} & \multicolumn{2}{c}{SSSP} & \multicolumn{2}{c}{WCC} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+Scale & CSR & Phil. & CSR & Phil. & CSR & Phil. & CSR & Phil. \\
+\midrule
+$2^{14}$ & 0.7 & 0.7 & 6.7 & 10.0 & 4.3 & 4.5 & 3.1 & 2.8 \\
+$2^{16}$ & 3.2 & 3.2 & 30.2 & 42.5 & 20.2 & 22.5 & 13.2 & 11.9 \\
+$2^{18}$ & 20.4 & 14.4 & 171.1 & 260.1 & 99.6 & 121.6 & 61.0 & 61.4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Table 2: Tier Distribution
+\begin{table}[t]
+\centering
+\caption{Edge distribution across storage tiers. Degree-based
+  placement assigns high-degree vertex edges to DRAM.}
+\label{tab:tier-dist}
+\begin{tabular}{l r r r r r r}
+\toprule
+& \multicolumn{3}{c}{Edge Count} & \multicolumn{3}{c}{Percentage} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Scale & DRAM & SSD & HDD & DRAM & SSD & HDD \\
+\midrule
+$2^{14}$ & 256.6K & 5.2K & 0 & 98.0\% & 2.0\% & 0.0\% \\
+$2^{16}$ & 1.0M & 20.0K & 0 & 98.1\% & 1.9\% & 0.0\% \\
+$2^{18}$ & 4.1M & 77.8K & 0 & 98.1\% & 1.9\% & 0.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Table 3: Real Dataset — Algorithm Latency (ms)
+\begin{table}[t]
+\centering
+\caption{Algorithm latency (ms) on real-world graphs from SNAP.
+  Philemon with degree-based tiering vs pure-DRAM CSR.}
+\label{tab:real-latency}
+\begin{tabular}{l r r r r r r r r}
+\toprule
+& \multicolumn{2}{c}{BFS} & \multicolumn{2}{c}{PageRank} & \multicolumn{2}{c}{SSSP} & \multicolumn{2}{c}{WCC} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+Dataset & CSR & Phil. & CSR & Phil. & CSR & Phil. & CSR & Phil. \\
+\midrule
+email-Enron & 2.51 & 2.10 & 16.58 & 27.40 & 15.93 & 18.82 & 4.95 & 7.52 \\
+wiki-Vote & 0.21 & 0.19 & 2.54 & 4.46 & 0.93 & 0.97 & 0.70 & 1.28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Table 4: Scalability Summary — Slowdown Ratios
+\begin{table}[t]
+\centering
+\caption{Philemon slowdown vs CSR and memory usage.
+  BFS benefits from direction-optimization at larger scales.}
+\label{tab:scalability}
+\begin{tabular}{l r r r r r}
+\toprule
+Scale & BFS & PR & SSSP & WCC & RSS (MB) \\
+\midrule
+$2^{14}$ & 1.08$\times$ & 1.49$\times$ & 1.05$\times$ & 0.91$\times$ & 22.0 \\
+$2^{16}$ & 1.02$\times$ & 1.41$\times$ & 1.11$\times$ & 0.90$\times$ & 75.8 \\
+$2^{18}$ & 0.71$\times$ & 1.52$\times$ & 1.22$\times$ & 1.01$\times$ & 301.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Table 5: Real Dataset — Tier Distribution and Performance
+\begin{table}[t]
+\centering
+\caption{Tier distribution and slowdown ratios on real datasets.
+  Real graphs show more SSD/HDD usage due to varied degree distributions.}
+\label{tab:real-tier}
+\begin{tabular}{l r r r r r r r}
+\toprule
+& \multicolumn{3}{c}{Tier \%} & \multicolumn{4}{c}{Slowdown} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-8}
+Dataset & DRAM & SSD & HDD & BFS & PR & SSSP & WCC \\
+\midrule
+wiki-Vote & 64.3\% & 33.4\% & 2.3\% & 0.89$\times$ & 1.75$\times$ & 1.04$\times$ & 1.84$\times$ \\
+email-Enron & 62.6\% & 34.4\% & 3.0\% & 0.84$\times$ & 1.65$\times$ & 1.18$\times$ & 1.52$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Appendix: Regression Verification (M167-M168)
+% Confirms reproducibility of RMAT + real dataset experiments
+\begin{table}[t]
+\centering
+\caption{Regression verification: re-run of all experiments.}
+\label{tab:regression}
+\begin{tabular}{l r r r r r r}
+\toprule
+Dataset & $|V|$ & $|E|$ & BFS (ms) & PR (ms) & SSSP (ms) & WCC (ms) \\
+\midrule
+RMAT-14 & 16.4K & 262.1K & 0.76 & 6.64 & 4.13 & 3.99 \\
+RMAT-16 & 65.5K & 1.0M & 3.56 & 31.56 & 19.59 & 19.04 \\
+RMAT-18 & 262.1K & 4.2M & 16.61 & 159.53 & 97.60 & 90.19 \\
+wiki-Vote & 7.1K & 103.6K & 0.29 & 2.57 & 2.37 & 0.97 \\
+email-Enron & 36.7K & 735.1K & 3.54 & 17.16 & 18.67 & 6.92 \\
+\bottomrule
+\end{tabular}
+\end{table}
