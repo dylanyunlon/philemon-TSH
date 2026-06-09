@@ -186,3 +186,62 @@ ags1 服务器                          GitHub 仓库
 第六位Claude: M211-M215 — 最终验证+提交准备
   重点: 回归测试 + PDF编译 + tag atc26-submission
 ```
+
+## 第一位 Claude 第二轮执行记录 (M188-M189)
+
+### M188 ✅ 仓库大清理
+- 删除45个mXXX前缀的experiment/*.cpp 
+- 删除旧logs、stale results、根目录杂乱文件
+- 删除data.zip (107,602行代码删除)
+- 更新.gitignore
+
+### M189 ✅ Baseline对比框架
+- 创建 experiment/run_baseline_comparison.sh (DGS vs Philemon-TSH)
+- 创建 experiment/setup_baseline_env.sh (ags1环境初始化)
+- 对比baseline: DynamicGraphStorage (SJTU-Liquid, SIGMOD'26)
+
+### 子Claude Worker状态
+| Worker | Conv ID | 任务 | 状态 |
+|--------|---------|------|------|
+| Worker 1 | `85362bc1...` | M186 算法修改 | ✅ 完成(部分) |
+| Worker 2 | `da3ca5c9...` | M187 PR修复 | ✅ 完成+pushed |
+| Worker 3 | `5179fc60...` | M189 baseline | ⚠️ 执行中但被截断 |
+
+### 当前指标 (M189后, CPU模拟)
+| 指标 | 值 | 目标 |
+|------|------|------|
+| BFS retention | 110.6% | ≥100% ✅ |
+| PR sum_scores | 1.000000 | ≈1.0 ✅ |
+| SSSP pruned | 6308 edges | - |
+| Tier DRAM% | 60% | 60% ✅ |
+| Memory ratio | 需GPU实测 | ≤4x |
+| 仓库清洁度 | 0个mXXX后缀 | 0 ✅ |
+
+### 6位Claude开发进度 (更新版)
+```
+第一位Claude (已完成): M181-M189 — 基础设施+算法优化+清理+baseline框架
+第二位Claude: M190-M194 — tiered_allocator shared pool优化 + PR OpenMP pattern
+第三位Claude: M195-M199 — ags1实测 DGS baseline + 真实数据集
+第四位Claude: M200-M204 — GPU tiered memory (cudaMalloc H100+A6000) 
+第五位Claude: M205-M210 — 论文pgfplots图表 + philemon_tsh.tex数据填充
+第六位Claude: M211-M215 — 回归测试 + PDF编译 + tag atc26-submission
+```
+
+### ags1服务器使用说明 (给后续Claude)
+```bash
+# 1. SSH到ags1
+ssh jiacheng@ags1
+
+# 2. 激活环境
+conda activate walking3
+cd /data/jiacheng/system/cache/temp/atc2026
+
+# 3. 初次设置
+bash philemon-TSH/experiment/setup_baseline_env.sh
+
+# 4. 运行对比实验
+bash philemon-TSH/experiment/run_baseline_comparison.sh
+
+# 5. 运行自动实验并push
+bash philemon-TSH/experiment/auto_experiment_push.sh
+```
