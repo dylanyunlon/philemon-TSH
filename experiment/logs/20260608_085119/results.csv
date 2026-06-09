@@ -1,9 +1,0 @@
-experiment,scale,pass,fail,time_ms,status
-m145_m146_algo_reader_utils_experiment,1000,47,0
-0,47,OK
-m145_m146_algo_reader_utils_experiment,10000,47,0
-0,331,OK
-m145_m146_algo_reader_utils_experiment,100000,47,0
-0,3725,OK
-m145_m146_algo_reader_utils_experiment,1000000,47,0
-0,43491,OK

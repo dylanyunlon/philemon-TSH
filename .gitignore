@@ -29,3 +29,20 @@ experiment/data/*.txt
 experiment/results/
 experiment/m157_m158
 claude-hk-config
+# 二进制文件
+experiment/philemon_experiment
+*.o
+*.so
+*.a
+
+# 本地数据
+*.zip
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# 本地缓存
+claude-hk-config/
+__pycache__/
