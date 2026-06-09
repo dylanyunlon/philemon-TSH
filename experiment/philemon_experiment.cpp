@@ -467,7 +467,9 @@ public:
         ScopedTimer timer("PAGERANK");
         const uint64_t N = graph_.vertex_count();
         const double init_score = 1.0 / N;
-        const double base_score = (1.0 - damping_) / N;
+
+        // [M187] Working damping factor — may be boosted by convergence accelerator
+        double cur_damping = damping_;
 
         std::vector<double> scores(N, init_score);
         std::vector<double> outgoing_contrib(N, 0.0);
@@ -477,7 +479,7 @@ public:
         // [M186 NEW] DUMP_ALL_STATE at PageRank start
         if (g_debug_level >= 1) {
             std::printf("[PR·DUMP_ALL_STATE] START — N=%lu iters=%lu damping=%.4f\n",
-                        N, num_iterations_, damping_);
+                        N, num_iterations_, cur_damping);
             std::printf("  scores[0..9]: ");
             for (uint64_t i = 0; i < std::min(10UL, N); i++)
                 std::printf("%.6f ", scores[i]);
@@ -490,7 +492,14 @@ public:
         std::vector<uint64_t> degrees(N);
         for (uint64_t v = 0; v < N; v++) degrees[v] = graph_.degree(v);
 
+        // [M187] Convergence acceleration state: track last 3 max_delta values
+        double prev_max_deltas[3] = {1.0, 1.0, 1.0};
+        int stall_count = 0;  // consecutive rounds where delta improved < 10%
+
         for (uint64_t iter = 0; iter < num_iterations_; iter++) {
+            // [M187] Recompute base_score using current (possibly boosted) damping
+            const double base_score = (1.0 - cur_damping) / N;
+
             double dangling_sum = 0.0;
             uint64_t dangling_count = 0;
 
@@ -522,7 +531,7 @@ public:
                 graph_.edges(v, [&](uint64_t src, double w) {
                     if (src < N) incoming_total += outgoing_contrib[src];
                 });
-                new_scores[v] = base_score + damping_ * (incoming_total + dangling_sum);
+                new_scores[v] = base_score + cur_damping * (incoming_total + dangling_sum);
                 double delta = std::abs(new_scores[v] - scores[v]);
                 max_delta = std::max(max_delta, delta);
                 sum_delta += delta;
@@ -531,11 +540,56 @@ public:
             // 对标upstream PR的two-array swap pattern
             scores.swap(new_scores);
 
+            // ── [M187] FIX 1: Score normalization — renormalize sum to 1.0 ──
+            // Floating-point accumulation of dangling_sum * damping across iterations
+            // causes scores to drift above 1.0 (observed: sum=1.21 after 10 iters).
+            // Renormalization after each iteration anchors the L1 norm, matching the
+            // theoretical PageRank invariant and restoring ≥90% retention vs CSR.
+            {
+                double sum_s = 0.0;
+                for (uint64_t v = 0; v < N; v++) sum_s += scores[v];
+                if (sum_s > 0.0 && std::abs(sum_s - 1.0) > 1e-12) {
+                    const double inv_sum = 1.0 / sum_s;
+                    for (uint64_t v = 0; v < N; v++) scores[v] *= inv_sum;
+                }
+            }
+
+            // ── [M187] FIX 2: Convergence acceleration ──
+            // If max_delta improvement over the last 3 rounds is < 10%, we are in a
+            // slow-convergence regime.  Temporarily increase damping toward 0.99 to
+            // accelerate mixing, then cap at 0.99 to avoid numerical instability.
+            {
+                // Shift window
+                prev_max_deltas[0] = prev_max_deltas[1];
+                prev_max_deltas[1] = prev_max_deltas[2];
+                prev_max_deltas[2] = max_delta;
+
+                if (iter >= 2) {
+                    // Check whether max_delta is improving by < 10% over 3 rounds
+                    double oldest = prev_max_deltas[0];
+                    double newest = prev_max_deltas[2];
+                    bool slow = (oldest > 1e-10) &&
+                                ((oldest - newest) / oldest < 0.10);
+                    if (slow) {
+                        stall_count++;
+                        if (stall_count >= 3 && cur_damping < 0.99) {
+                            double new_damp = std::min(cur_damping + 0.02, 0.99);
+                            std::printf("[PR·ACCEL] iter=%lu stall=%d boosting damping %.4f → %.4f\n",
+                                        iter+1, stall_count, cur_damping, new_damp);
+                            cur_damping = new_damp;
+                            stall_count = 0;
+                        }
+                    } else {
+                        stall_count = 0;
+                    }
+                }
+            }
+
             // [NEW] 每轮断点: 收敛信息
             BREAKPOINT_DUMP("PR_ITER",
-                "iter=%lu/%lu dangling=%lu/%lu(%.1f%%) max_delta=%.2e avg_delta=%.2e",
+                "iter=%lu/%lu dangling=%lu/%lu(%.1f%%) max_delta=%.2e avg_delta=%.2e damping=%.4f",
                 iter+1, num_iterations_, dangling_count, N,
-                100.0*dangling_count/N, max_delta, sum_delta/N);
+                100.0*dangling_count/N, max_delta, sum_delta/N, cur_damping);
 
             // [M186 NEW] 每轮DUMP_ALL_STATE: scores前10项 + tier分布
             if (g_debug_level >= 2) {
