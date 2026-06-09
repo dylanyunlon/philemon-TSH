@@ -137,3 +137,52 @@ ags1 服务器                          GitHub 仓库
 4. **每次 push 前确保编译通过**
 5. **子 Claude 使用 opus 4.6 (medium)**
 6. **截断时发送 Continue 继续执行**
+
+## 第一位 Claude (当前轮) 执行记录
+
+### 完成项
+- **M181** ✅ 环境搭建 + tree/clone/编译/运行验证
+- **M183** ✅ 自动实验→git push流水线 (`experiment/auto_experiment_push.sh`)
+- **M186** ✅ 算法优化：tier分配60/25/15 + PR batch-swap + SSSP pruning + DUMP_ALL_STATE
+- **M187** ✅ PR score normalization + convergence acceleration (由子Claude Worker 2完成)
+
+### 子Claude分配记录
+| Worker | Conv ID | 任务 | 状态 |
+|--------|---------|------|------|
+| Worker 1 (sonnet 4.6) | `85362bc1-f765-43a7-9c3f-3006b9bdc382` | M186 算法修改 | ✅ 完成(部分) |
+| Worker 2 (sonnet 4.6) | `da3ca5c9-55cc-4bbb-8fc7-874bab92dd65` | M187 PR修复 | ✅ 完成+pushed |
+
+### 当前数据状态 (M187后)
+| 指标 | M185前 | M187后 | 目标 |
+|------|--------|--------|------|
+| BFS retention | 110.6% | 110.6% | ≥100% ✅ |
+| PR sum_scores | 1.21 ❌ | 1.00 ✅ | ≈1.0 |
+| SSSP pruned edges | 0 | 6308 | - |
+| Tier分布 DRAM% | 80% | 60% | - |
+| Memory ratio | 8.99x | 待GPU实测 | ≤4x |
+
+### 6位Claude开发进度计划 (更新版)
+
+```
+第一位Claude (本轮): M181-M187 — 基础设施+算法初步优化
+  状态: ✅ 完成
+
+第二位Claude: M188-M192 — 算法深度修复
+  重点: tiered_allocator shared pool + degree-aware compact placement
+  前置: git pull获取M187的score normalization修复
+
+第三位Claude: M193-M198 — SOTA Baseline实测 (ags1服务器)
+  重点: 在ags1上编译RapidStore/Sortledton/Teseo/LiveGraph
+  脚本: bash experiment/auto_experiment_push.sh
+  环境: conda activate walking3
+
+第四位Claude: M199-M204 — 真实GPU tiered memory实验
+  重点: cudaMalloc(H100) + cudaMallocManaged(A6000) + host malloc
+  硬件: GPU0=A6000 GPU1=A6000 GPU2=H100NVL (NUMA1, PCIe)
+
+第五位Claude: M205-M210 — 论文图表+数据填充
+  重点: pgfplots图 + 更新philemon_tsh.tex
+
+第六位Claude: M211-M215 — 最终验证+提交准备
+  重点: 回归测试 + PDF编译 + tag atc26-submission
+```
