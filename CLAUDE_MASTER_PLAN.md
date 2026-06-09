@@ -118,7 +118,7 @@
 ```
 ags1 服务器                          GitHub 仓库
 ┌─────────────────┐                 ┌─────────────────┐
-│ conda env: atc26│                 │ philemon-TSH    │
+│ conda env: walking3│                 │ philemon-TSH    │
 │                 │   git push      │                 │
 │ 跑实验脚本      ├────────────────→│ experiment/     │
 │ 生成 CSV/JSON   │                 │   results/      │
