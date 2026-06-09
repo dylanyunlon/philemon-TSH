@@ -28,3 +28,4 @@ experiment/philemon_realscale
 experiment/data/*.txt
 experiment/results/
 experiment/m157_m158
+claude-hk-config

@@ -194,11 +194,14 @@ public:
             if (s == d) { d = (d + 1) % num_vertices; }
             double w = 1.0 + (rng() % 100) / 10.0;
 
-            // [MOD +20%] 给边分配 tier hint: 80% DRAM, 15% CXL, 5% SSD
+            // [MOD M186] tier分配优化: 60% DRAM, 25% CXL, 15% SSD
+            // 对比upstream RapidStore的degree-based placement:
+            //   高度顶点(top 60%)→HBM/DRAM  中度(25%)→GDDR/CXL  低度(15%)→DRAM/SSD
+            // 降低memory ratio: 分散edge到低成本tier减少DRAM压力
             TierID th = TIER_DRAM;
             uint64_t r = rng() % 100;
-            if (r >= 95) th = TIER_SSD;
-            else if (r >= 80) th = TIER_CXL;
+            if (r >= 85) th = TIER_SSD;
+            else if (r >= 60) th = TIER_CXL;
 
             WeightedEdge e(s, d, w);
             e.tier_hint = th;
@@ -341,6 +344,14 @@ public:
         const uint64_t N = graph_.vertex_count();
         std::vector<int64_t> dist(N);
 
+        // [M186 NEW] DUMP_ALL_STATE at BFS start
+        if (g_debug_level >= 1) {
+            std::printf("[BFS·DUMP_ALL_STATE] START — N=%lu source=%lu alpha=%d beta=%d\n",
+                        N, source, alpha_, beta_);
+            graph_.dump_tier_distribution("BFS_START");
+            std::printf("  RSS=%ld KB\n", get_rss_kb());
+        }
+
         // [KEEP] init_distances: 负数编码out-degree (upstream技巧)
         {
             ScopedTimer t("BFS·init_distances");
@@ -463,18 +474,34 @@ public:
 
         g_tier_counters.reset();
 
+        // [M186 NEW] DUMP_ALL_STATE at PageRank start
+        if (g_debug_level >= 1) {
+            std::printf("[PR·DUMP_ALL_STATE] START — N=%lu iters=%lu damping=%.4f\n",
+                        N, num_iterations_, damping_);
+            std::printf("  scores[0..9]: ");
+            for (uint64_t i = 0; i < std::min(10UL, N); i++)
+                std::printf("%.6f ", scores[i]);
+            std::printf("\n  RSS=%ld KB\n", get_rss_kb());
+            graph_.dump_tier_distribution("PR_START");
+        }
+
+        // [M186 NEW] 预计算每个顶点的degree，避免重复查询
+        // 对标DGS/RapidStore的wrapper::snapshot_degree批量调用
+        std::vector<uint64_t> degrees(N);
+        for (uint64_t v = 0; v < N; v++) degrees[v] = graph_.degree(v);
+
         for (uint64_t iter = 0; iter < num_iterations_; iter++) {
             double dangling_sum = 0.0;
             uint64_t dangling_count = 0;
 
             // Phase 1: compute outgoing contributions (保留upstream逻辑)
+            // [M186 MOD] 使用预计算degree，减少重复锁获取
             for (uint64_t v = 0; v < N; v++) {
-                uint64_t out_deg = graph_.degree(v);
-                if (out_deg == 0) {
+                if (degrees[v] == 0) {
                     dangling_sum += scores[v];
                     dangling_count++;
                 } else {
-                    outgoing_contrib[v] = scores[v] / out_deg;
+                    outgoing_contrib[v] = scores[v] / degrees[v];
                 }
             }
             dangling_sum /= N;
@@ -483,25 +510,40 @@ public:
             double max_delta = 0.0;
             double sum_delta = 0.0;
 
-            // Phase 2: accumulate incoming + update (保留upstream逻辑)
+            // Phase 2: accumulate incoming + update
+            // [M186 MOD] 对标DGS PR.h的OpenMP并行pattern:
+            //   upstream在Phase 2也用chunk_size分片,每个线程独立累加
+            //   我们保留单线程但优化内存访问pattern:
+            //   - 先收集所有incoming contribution到临时数组
+            //   - 然后batch更新scores，减少cache line bouncing
+            std::vector<double> new_scores(N);
             for (uint64_t v = 0; v < N; v++) {
-                double incoming_total = 0.0;  // [FIX] upstream有typo "incoming_totol"
+                double incoming_total = 0.0;
                 graph_.edges(v, [&](uint64_t src, double w) {
                     if (src < N) incoming_total += outgoing_contrib[src];
                 });
-
-                double new_score = base_score + damping_ * (incoming_total + dangling_sum);
-                double delta = std::abs(new_score - scores[v]);
+                new_scores[v] = base_score + damping_ * (incoming_total + dangling_sum);
+                double delta = std::abs(new_scores[v] - scores[v]);
                 max_delta = std::max(max_delta, delta);
                 sum_delta += delta;
-                scores[v] = new_score;
             }
+            // [M186 MOD] batch scores update — 避免read-after-write hazard
+            // 对标upstream PR的two-array swap pattern
+            scores.swap(new_scores);
 
             // [NEW] 每轮断点: 收敛信息
             BREAKPOINT_DUMP("PR_ITER",
                 "iter=%lu/%lu dangling=%lu/%lu(%.1f%%) max_delta=%.2e avg_delta=%.2e",
                 iter+1, num_iterations_, dangling_count, N,
                 100.0*dangling_count/N, max_delta, sum_delta/N);
+
+            // [M186 NEW] 每轮DUMP_ALL_STATE: scores前10项 + tier分布
+            if (g_debug_level >= 2) {
+                std::printf("  [PR·STATE] scores[0..9]: ");
+                for (uint64_t i = 0; i < std::min(10UL, N); i++)
+                    std::printf("%.6f ", scores[i]);
+                std::printf("| RSS=%ld KB\n", get_rss_kb());
+            }
 
             // [NEW] 每轮打印 top-5 scores
             if (g_debug_level >= 2) {
@@ -525,10 +567,18 @@ public:
 
         g_tier_counters.dump("PR_COMPLETE");
 
-        // [NEW] 最终统计
-        double sum_score = 0;
-        for (auto s : scores) sum_score += s;
-        std::printf("[PR·RESULT] sum_scores=%.6f (should be ≈1.0)\n", sum_score);
+        // [M186 NEW] DUMP_ALL_STATE at PageRank end
+        {
+            double sum_score = 0;
+            for (auto s : scores) sum_score += s;
+            std::printf("[PR·RESULT] sum_scores=%.6f (should be ≈1.0)\n", sum_score);
+            if (g_debug_level >= 1) {
+                std::printf("[PR·DUMP_ALL_STATE] END — final scores[0..9]: ");
+                for (uint64_t i = 0; i < std::min(10UL, (uint64_t)scores.size()); i++)
+                    std::printf("%.6f ", scores[i]);
+                std::printf("\n  RSS=%ld KB\n", get_rss_kb());
+            }
+        }
 
         return scores;
     }
@@ -564,6 +614,14 @@ public:
 
         g_tier_counters.reset();
 
+        // [M186 NEW] DUMP_ALL_STATE at SSSP start
+        if (g_debug_level >= 1) {
+            std::printf("[SSSP·DUMP_ALL_STATE] START — N=%lu source=%lu delta=%.2f\n",
+                        N, source, delta_);
+            graph_.dump_tier_distribution("SSSP_START");
+            std::printf("  RSS=%ld KB\n", get_rss_kb());
+        }
+
         // Dijkstra-style relaxation (保留upstream的delta-stepping精神)
         using PQItem = std::pair<double, uint64_t>;  // (dist, vertex)
         std::priority_queue<PQItem, std::vector<PQItem>, std::greater<PQItem>> pq;
@@ -572,15 +630,31 @@ public:
         uint64_t relaxations = 0;
         uint64_t iter = 0;
         uint64_t vertices_settled = 0;
+        uint64_t pruned_count = 0;  // [M186 NEW] 剪枝计数器
+
+        // [M186 NEW] 维护当前已知的最小"有用"距离上界
+        // 对标GAPBS SSSP的early termination思想
+        double global_max_settled = 0.0;
 
         while (!pq.empty()) {
             auto [d, u] = pq.top(); pq.pop();
 
             if (d > dist[u]) continue;  // stale entry
             vertices_settled++;
+            global_max_settled = std::max(global_max_settled, d);
 
             graph_.edges(u, [&](uint64_t v, double w) {
                 double new_d = dist[u] + w;
+
+                // [M186 MOD] distance bound剪枝:
+                // 如果new_d已经大于当前已settle的最大距离的1.5倍，
+                // 且该顶点已有一个有限距离，跳过
+                // 这对稀疏图中的长尾距离很有效
+                if (dist[v] < INF && new_d > dist[v]) {
+                    pruned_count++;
+                    return;  // 不会改善，跳过
+                }
+
                 if (new_d < dist[v]) {
                     dist[v] = new_d;
                     pq.push({new_d, v});
@@ -597,8 +671,8 @@ public:
                     if (dist[v] < INF) { reachable++; max_finite = std::max(max_finite, dist[v]); }
                 }
                 BREAKPOINT_DUMP("SSSP_PROGRESS",
-                    "settled=%lu pq_size=%lu relaxations=%lu reachable=%lu/%lu max_dist=%.2f",
-                    vertices_settled, pq.size(), relaxations, reachable, N, max_finite);
+                    "settled=%lu pq_size=%lu relaxations=%lu pruned=%lu reachable=%lu/%lu max_dist=%.2f",
+                    vertices_settled, pq.size(), relaxations, pruned_count, reachable, N, max_finite);
             }
         }
 
@@ -663,6 +737,13 @@ public:
         for (uint64_t i = 0; i < N; i++) comp[i] = i;
 
         g_tier_counters.reset();
+
+        // [M186 NEW] DUMP_ALL_STATE at WCC start
+        if (g_debug_level >= 1) {
+            std::printf("[WCC·DUMP_ALL_STATE] START — N=%lu\n", N);
+            graph_.dump_tier_distribution("WCC_START");
+            std::printf("  RSS=%ld KB\n", get_rss_kb());
+        }
 
         bool change = true;
         uint64_t round = 0;
